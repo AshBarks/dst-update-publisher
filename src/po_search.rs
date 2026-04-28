@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 
 use crate::error::{AppError, AppResult};
@@ -6,11 +6,118 @@ use crate::models::{PoSearchResult, PoTranslationEntry};
 
 pub struct PoFileIndex {
     entries: Vec<PoIndexEntry>,
+    exact_map: HashMap<String, Vec<usize>>,
+    word_index: HashMap<String, Vec<usize>>,
 }
 
 struct PoIndexEntry {
     msgid: String,
+    msgid_lower: String,
     msgstr: String,
+}
+
+static STOP_WORDS: std::sync::LazyLock<HashSet<&'static str>> = std::sync::LazyLock::new(|| {
+    [
+        "a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "have", "has",
+        "had", "do", "does", "did", "will", "would", "shall", "should", "may", "might", "can",
+        "could", "must", "of", "in", "to", "for", "with", "on", "at", "by", "from", "as",
+        "into", "through", "during", "before", "after", "above", "below", "between", "out",
+        "off", "over", "under", "again", "further", "then", "once", "and", "but", "or", "nor",
+        "not", "so", "yet", "both", "either", "neither", "each", "every", "all", "any", "few",
+        "more", "most", "other", "some", "such", "no", "only", "own", "same", "than", "too",
+        "very", "just", "because", "if", "when", "while", "where", "how", "what", "which",
+        "who", "whom", "this", "that", "these", "those", "it", "its", "he", "she", "they",
+        "we", "you", "me", "my", "your", "his", "her", "our", "their", "i", "am",
+    ]
+    .into_iter()
+    .collect()
+});
+
+fn is_stop_word(word: &str) -> bool {
+    STOP_WORDS.contains(word.to_lowercase().as_str())
+}
+
+fn split_and_filter(term: &str) -> Vec<String> {
+    term.split_whitespace()
+        .filter(|w| !is_stop_word(w) && w.len() >= 3)
+        .map(|w| w.to_lowercase())
+        .collect()
+}
+
+fn generate_variants(word: &str) -> Vec<String> {
+    let mut variants = Vec::new();
+
+    if word.len() < 3 {
+        variants.push(word.to_string());
+        return variants;
+    }
+
+    variants.push(word.to_string());
+
+    if word.ends_with("ies") && word.len() > 4 {
+        variants.push(format!("{}y", &word[..word.len() - 3]));
+    }
+    if word.ends_with("ves") && word.len() > 4 {
+        variants.push(format!("{}f", &word[..word.len() - 3]));
+        variants.push(format!("{}fe", &word[..word.len() - 3]));
+    }
+    if word.ends_with("ses") || word.ends_with("xes") || word.ends_with("zes")
+        || word.ends_with("ches") || word.ends_with("shes")
+    {
+        variants.push(word[..word.len() - 2].to_string());
+    }
+    if word.ends_with('s') && !word.ends_with("ss") && !word.ends_with("us") {
+        variants.push(word[..word.len() - 1].to_string());
+    }
+    if word.ends_with("ing") && word.len() > 5 {
+        variants.push(word[..word.len() - 3].to_string());
+        if word.len() > 6 && word.as_bytes()[word.len() - 4] == word.as_bytes()[word.len() - 5] {
+            variants.push(word[..word.len() - 4].to_string());
+        }
+        variants.push(format!("{}e", &word[..word.len() - 3]));
+    }
+    if word.ends_with("ed") && word.len() > 4 {
+        variants.push(word[..word.len() - 2].to_string());
+        if word.len() > 5 && word.as_bytes()[word.len() - 3] == word.as_bytes()[word.len() - 4] {
+            variants.push(word[..word.len() - 3].to_string());
+        }
+        variants.push(format!("{}e", &word[..word.len() - 2]));
+    }
+    if word.ends_with("ly") && word.len() > 4 {
+        variants.push(word[..word.len() - 2].to_string());
+    }
+    if word.ends_with("er") && word.len() > 4 {
+        variants.push(word[..word.len() - 2].to_string());
+        variants.push(format!("{}e", &word[..word.len() - 2]));
+    }
+    if word.ends_with("est") && word.len() > 5 {
+        variants.push(word[..word.len() - 3].to_string());
+        variants.push(format!("{}e", &word[..word.len() - 3]));
+    }
+
+    if !word.ends_with('s') && !word.ends_with("ing") && !word.ends_with("ed") {
+        variants.push(format!("{}s", word));
+        if word.ends_with('s') || word.ends_with('x') || word.ends_with('z')
+            || word.ends_with("ch") || word.ends_with("sh")
+        {
+            variants.push(format!("{}es", word));
+        }
+        if word.ends_with('y') && word.len() > 2 && !is_vowel(word.as_bytes()[word.len() - 2]) {
+            variants.push(format!("{}ies", &word[..word.len() - 1]));
+        }
+        if word.ends_with("f") && !word.ends_with("ff") {
+            variants.push(format!("{}ves", &word[..word.len() - 1]));
+        }
+        if let Some(stripped) = word.strip_suffix("fe") {
+            variants.push(format!("{}ves", stripped));
+        }
+    }
+
+    variants
+}
+
+fn is_vowel(b: u8) -> bool {
+    matches!(b, b'a' | b'e' | b'i' | b'o' | b'u')
 }
 
 pub fn load_po_index(zip_path: &str, po_files: &[String]) -> AppResult<PoFileIndex> {
@@ -23,6 +130,8 @@ pub fn load_po_index(zip_path: &str, po_files: &[String]) -> AppResult<PoFileInd
     })?;
 
     let mut all_entries: Vec<PoIndexEntry> = Vec::new();
+    let mut exact_map: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut word_index: HashMap<String, Vec<usize>> = HashMap::new();
 
     for po_path in po_files {
         let mut zip_file = match archive.by_name(po_path) {
@@ -55,7 +164,7 @@ pub fn load_po_index(zip_path: &str, po_files: &[String]) -> AppResult<PoFileInd
             }
 
             let msgid = message.msgid().to_string();
-            if msgid.split(" ").count() > 5 {
+            if msgid.split(' ').count() > 5 {
                 continue;
             }
 
@@ -72,137 +181,138 @@ pub fn load_po_index(zip_path: &str, po_files: &[String]) -> AppResult<PoFileInd
                 continue;
             }
 
-            all_entries.push(PoIndexEntry { msgid, msgstr });
-        }
-    }
-
-    tracing::info!("loaded {} PO entries from ZIP", all_entries.len());
-
-    Ok(PoFileIndex {
-        entries: all_entries,
-    })
-}
-
-const STOP_WORDS: &[&str] = &[
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
-    "do", "does", "did", "will", "would", "shall", "should", "may", "might", "can", "could",
-    "must", "of", "in", "to", "for", "with", "on", "at", "by", "from", "as", "into", "through",
-    "during", "before", "after", "above", "below", "between", "out", "off", "over", "under",
-    "again", "further", "then", "once", "and", "but", "or", "nor", "not", "so", "yet", "both",
-    "either", "neither", "each", "every", "all", "any", "few", "more", "most", "other", "some",
-    "such", "no", "only", "own", "same", "than", "too", "very", "just", "because", "if", "when",
-    "while", "where", "how", "what", "which", "who", "whom", "this", "that", "these", "those",
-    "it", "its", "he", "she", "they", "we", "you", "me", "my", "your", "his", "her", "our",
-    "their", "its", "i", "am",
-];
-
-fn is_stop_word(word: &str) -> bool {
-    STOP_WORDS.contains(&word.to_lowercase().as_str())
-}
-
-fn split_and_filter(term: &str) -> Vec<String> {
-    term.split_whitespace()
-        .filter(|w| !is_stop_word(w))
-        .map(|w| w.to_lowercase())
-        .collect()
-}
-
-impl PoFileIndex {
-    pub fn entries_len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn search_terms(&self, terms: &[&str]) -> Vec<PoSearchResult> {
-        let mut results: Vec<Vec<PoTranslationEntry>> = vec![Vec::new(); terms.len()];
-        // track terms that match term exactly
-        let mut matches: HashSet<usize> = HashSet::new();
-        // track terms that term contains entry: e.g. "vargs" -> "varg"
-        let mut contains_only: HashSet<usize> = HashSet::new();
-
-        let term_lower: Vec<String> = terms.iter().map(|t| t.to_lowercase()).collect();
-
-        for entry in self.entries.iter() {
-            let entry_lower = entry.msgid.to_lowercase();
-            if entry_lower.len() < 3 {
+            let msgid_lower = msgid.to_lowercase();
+            if msgid_lower.len() < 3 {
                 continue;
             }
 
-            for (term_idx, term) in term_lower.iter().enumerate() {
-                if matches.contains(&term_idx) {
+            let idx = all_entries.len();
+
+            for variant in generate_variants(&msgid_lower) {
+                exact_map.entry(variant).or_default().push(idx);
+            }
+
+            for word in split_and_filter(&msgid) {
+                word_index.entry(word).or_default().push(idx);
+            }
+
+            all_entries.push(PoIndexEntry {
+                msgid,
+                msgid_lower,
+                msgstr,
+            });
+        }
+    }
+
+    tracing::info!(
+        "loaded {} PO entries, {} exact map keys, {} word index keys",
+        all_entries.len(),
+        exact_map.len(),
+        word_index.len()
+    );
+
+    Ok(PoFileIndex {
+        entries: all_entries,
+        exact_map,
+        word_index,
+    })
+}
+
+impl PoFileIndex {
+    pub fn search_terms(&self, terms: &[&str]) -> Vec<PoSearchResult> {
+        terms.iter().map(|term| self.search_single_term(term)).collect()
+    }
+
+    fn search_single_term(&self, term: &str) -> PoSearchResult {
+        let term_lower = term.to_lowercase();
+        let mut seen = HashSet::new();
+        let mut candidates: Vec<(usize, PoTranslationEntry)> = Vec::new();
+
+        if let Some(indices) = self.exact_map.get(&term_lower) {
+            for &idx in indices {
+                if seen.insert(idx) {
+                    let entry = &self.entries[idx];
+                    candidates.push((
+                        usize::MAX,
+                        PoTranslationEntry {
+                            original: entry.msgid.clone(),
+                            translation: entry.msgstr.clone(),
+                        },
+                    ));
+                }
+            }
+        }
+
+        if candidates.is_empty() {
+            for variant in generate_variants(&term_lower) {
+                if variant == term_lower {
                     continue;
                 }
-                if entry_lower == *term {
-                    matches.insert(term_idx);
-                    results[term_idx] = vec![PoTranslationEntry {
-                        original: entry.msgid.clone(),
-                        translation: entry.msgstr.clone(),
-                    }];
-                } else if contains_only.contains(&term_idx) {
-                    if term.contains(&entry_lower) {
-                        results[term_idx].push(PoTranslationEntry {
-                            original: entry.msgid.clone(),
-                            translation: entry.msgstr.clone(),
-                        });
-                    }
-                } else {
-                    if term.contains(&entry_lower) {
-                        results[term_idx] = vec![PoTranslationEntry {
-                            original: entry.msgid.clone(),
-                            translation: entry.msgstr.clone(),
-                        }];
-                        contains_only.insert(term_idx);
-                    } else {
-                        for word in split_and_filter(term) {
-                            if entry_lower.contains(word.as_str()) {
-                                results[term_idx].push(PoTranslationEntry {
+                if let Some(indices) = self.exact_map.get(&variant) {
+                    for &idx in indices {
+                        if seen.insert(idx) {
+                            let entry = &self.entries[idx];
+                            candidates.push((
+                                100,
+                                PoTranslationEntry {
                                     original: entry.msgid.clone(),
                                     translation: entry.msgstr.clone(),
-                                });
-                                break;
-                            }
+                                },
+                            ));
                         }
+                    }
+                    break;
+                }
+            }
+        }
+
+        if candidates.is_empty() {
+            let term_words = split_and_filter(term);
+            let mut candidate_indices: Vec<usize> = Vec::new();
+            let mut candidate_set: HashSet<usize> = HashSet::new();
+
+            for word in &term_words {
+                if let Some(indices) = self.word_index.get(word) {
+                    for &idx in indices {
+                        if candidate_set.insert(idx) {
+                            candidate_indices.push(idx);
+                        }
+                    }
+                }
+            }
+
+            for idx in candidate_indices {
+                if seen.insert(idx) {
+                    let entry = &self.entries[idx];
+                    let mut score = 0;
+                    for word in &term_words {
+                        if entry.msgid_lower.contains(word.as_str()) {
+                            score += 1;
+                        }
+                    }
+                    if score > 0 {
+                        candidates.push((
+                            score,
+                            PoTranslationEntry {
+                                original: entry.msgid.clone(),
+                                translation: entry.msgstr.clone(),
+                            },
+                        ));
                     }
                 }
             }
         }
 
-        terms
-            .iter()
-            .zip(results)
-            .map(|(t, mut candidates)| {
-                let term_lower = t.to_lowercase();
-                let term_words = split_and_filter(t);
+        candidates.sort_by_key(|b| std::cmp::Reverse(b.0));
 
-                let mut seen = HashSet::new();
-                candidates.retain(|c| seen.insert(c.original.clone()));
+        let mut dedup = HashSet::new();
+        candidates.retain(|(_, e)| dedup.insert((e.original.clone(), e.translation.clone())));
 
-                candidates.sort_by(|a, b| {
-                    let score = |e: &PoTranslationEntry| -> usize {
-                        let el = e.original.to_lowercase();
-                        if el == term_lower {
-                            return usize::MAX;
-                        }
-                        let mut s = 0;
-                        if term_lower.contains(&el) {
-                            s += term_words.len() + 1;
-                        }
-                        for word in &term_words {
-                            if el.contains(word.as_str()) {
-                                s += 1;
-                            }
-                        }
-                        s
-                    };
-                    score(b).cmp(&score(a))
-                });
+        candidates.truncate(5);
 
-                candidates.truncate(5);
-
-                PoSearchResult {
-                    term: t.to_string(),
-                    candidates,
-                }
-            })
-            .collect()
+        PoSearchResult {
+            term: term.to_string(),
+            candidates: candidates.into_iter().map(|(_, e)| e).collect(),
+        }
     }
 }

@@ -73,7 +73,7 @@ async fn process_once(
 
     let translated = full_translate(&llm_client, config, &announcement_text, po_index).await?;
 
-    tracing::trace!("Translated: {:?}", translated);
+    tracing::info!(translated = translated.translated_text, translated.search_results = ?translated.search_results);
 
     tracing::info!(
         "translation completed, translated text length: {} chars",
