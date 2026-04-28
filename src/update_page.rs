@@ -112,7 +112,9 @@ mod tests {
     #[test]
     fn parse_update_page_release_entry() {
         let data = parse_update_page_html(UPDATE_HTML).unwrap();
-        let entry = data.find_by_revision("2714").expect("should find revision 2714");
+        let entry = data
+            .find_by_revision("2714")
+            .expect("should find revision 2714");
         assert!(matches!(entry.channel, ReleaseChannel::Release));
         assert!(!entry.is_hotfix);
     }
@@ -120,7 +122,9 @@ mod tests {
     #[test]
     fn parse_update_page_beta_hotfix_entry() {
         let data = parse_update_page_html(UPDATE_HTML).unwrap();
-        let entry = data.find_by_revision("2722").expect("should find revision 2722");
+        let entry = data
+            .find_by_revision("2722")
+            .expect("should find revision 2722");
         assert!(matches!(entry.channel, ReleaseChannel::Beta));
         assert!(entry.is_hotfix);
     }
@@ -128,7 +132,9 @@ mod tests {
     #[test]
     fn parse_update_page_release_hotfix_entry() {
         let data = parse_update_page_html(UPDATE_HTML).unwrap();
-        let entry = data.find_by_revision("2715").expect("should find revision 2715");
+        let entry = data
+            .find_by_revision("2715")
+            .expect("should find revision 2715");
         assert!(matches!(entry.channel, ReleaseChannel::Release));
         assert!(entry.is_hotfix);
     }
@@ -136,7 +142,9 @@ mod tests {
     #[test]
     fn parse_update_page_beta_non_hotfix() {
         let data = parse_update_page_html(UPDATE_HTML).unwrap();
-        let entry = data.find_by_revision("2693").expect("should find revision 2693");
+        let entry = data
+            .find_by_revision("2693")
+            .expect("should find revision 2693");
         assert!(matches!(entry.channel, ReleaseChannel::Beta));
         assert!(!entry.is_hotfix);
     }
@@ -144,7 +152,9 @@ mod tests {
     #[test]
     fn parse_update_page_build_number() {
         let data = parse_update_page_html(UPDATE_HTML).unwrap();
-        let entry = data.find_by_revision("2722").expect("should find revision 2722");
+        let entry = data
+            .find_by_revision("2722")
+            .expect("should find revision 2722");
         assert_eq!(entry.build_number, "724783");
     }
 

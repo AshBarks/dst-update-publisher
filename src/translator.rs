@@ -87,8 +87,7 @@ fn execute_tool_call(
 
     let search_results = po_index.search_terms(&terms);
 
-    let tool_output = serde_json::to_string(&search_results)
-        .map_err(AppError::Serialization)?;
+    let tool_output = serde_json::to_string(&search_results).map_err(AppError::Serialization)?;
 
     Ok((search_results, tool_output))
 }
@@ -159,8 +158,7 @@ pub async fn full_translate(
             );
 
             if function_name == "search_po_terms" {
-                let (search_results, tool_output) =
-                    execute_tool_call(tool_call, po_index)?;
+                let (search_results, tool_output) = execute_tool_call(tool_call, po_index)?;
 
                 search_results_collected.extend(search_results);
 
@@ -193,9 +191,7 @@ pub async fn full_translate(
                     .model(&config.llm_model)
                     .messages(messages)
                     .build()
-                    .map_err(|e| {
-                        AppError::LlmApi(format!("failed to build request: {}", e))
-                    })?,
+                    .map_err(|e| AppError::LlmApi(format!("failed to build request: {}", e)))?,
             )
             .await
             .map_err(|e| AppError::LlmApi(format!("LLM API call failed: {}", e)))?;
@@ -207,8 +203,7 @@ pub async fn full_translate(
                 "no choices in final response".to_string(),
             ))?;
 
-        let translated_text =
-            second_choice.message.content.clone().unwrap_or_default();
+        let translated_text = second_choice.message.content.clone().unwrap_or_default();
 
         Ok(TranslatedAnnouncement {
             original_text: announcement.to_string(),
@@ -218,9 +213,7 @@ pub async fn full_translate(
     } else {
         let translated_text = first_message.content.clone().unwrap_or_default();
 
-        tracing::info!(
-            "LLM responded without tool calls, using direct response as translation"
-        );
+        tracing::info!("LLM responded without tool calls, using direct response as translation");
 
         Ok(TranslatedAnnouncement {
             original_text: announcement.to_string(),

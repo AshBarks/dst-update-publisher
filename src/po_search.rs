@@ -18,16 +18,16 @@ struct PoIndexEntry {
 
 static STOP_WORDS: std::sync::LazyLock<HashSet<&'static str>> = std::sync::LazyLock::new(|| {
     [
-        "a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "have", "has",
-        "had", "do", "does", "did", "will", "would", "shall", "should", "may", "might", "can",
-        "could", "must", "of", "in", "to", "for", "with", "on", "at", "by", "from", "as",
-        "into", "through", "during", "before", "after", "above", "below", "between", "out",
-        "off", "over", "under", "again", "further", "then", "once", "and", "but", "or", "nor",
-        "not", "so", "yet", "both", "either", "neither", "each", "every", "all", "any", "few",
-        "more", "most", "other", "some", "such", "no", "only", "own", "same", "than", "too",
-        "very", "just", "because", "if", "when", "while", "where", "how", "what", "which",
-        "who", "whom", "this", "that", "these", "those", "it", "its", "he", "she", "they",
-        "we", "you", "me", "my", "your", "his", "her", "our", "their", "i", "am",
+        "a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "do", "does", "did", "will", "would", "shall", "should", "may", "might", "can", "could",
+        "must", "of", "in", "to", "for", "with", "on", "at", "by", "from", "as", "into", "through",
+        "during", "before", "after", "above", "below", "between", "out", "off", "over", "under",
+        "again", "further", "then", "once", "and", "but", "or", "nor", "not", "so", "yet", "both",
+        "either", "neither", "each", "every", "all", "any", "few", "more", "most", "other", "some",
+        "such", "no", "only", "own", "same", "than", "too", "very", "just", "because", "if",
+        "when", "while", "where", "how", "what", "which", "who", "whom", "this", "that", "these",
+        "those", "it", "its", "he", "she", "they", "we", "you", "me", "my", "your", "his", "her",
+        "our", "their", "i", "am",
     ]
     .into_iter()
     .collect()
@@ -61,8 +61,11 @@ fn generate_variants(word: &str) -> Vec<String> {
         variants.push(format!("{}f", &word[..word.len() - 3]));
         variants.push(format!("{}fe", &word[..word.len() - 3]));
     }
-    if word.ends_with("ses") || word.ends_with("xes") || word.ends_with("zes")
-        || word.ends_with("ches") || word.ends_with("shes")
+    if word.ends_with("ses")
+        || word.ends_with("xes")
+        || word.ends_with("zes")
+        || word.ends_with("ches")
+        || word.ends_with("shes")
     {
         variants.push(word[..word.len() - 2].to_string());
     }
@@ -97,8 +100,11 @@ fn generate_variants(word: &str) -> Vec<String> {
 
     if !word.ends_with('s') && !word.ends_with("ing") && !word.ends_with("ed") {
         variants.push(format!("{}s", word));
-        if word.ends_with('s') || word.ends_with('x') || word.ends_with('z')
-            || word.ends_with("ch") || word.ends_with("sh")
+        if word.ends_with('s')
+            || word.ends_with('x')
+            || word.ends_with('z')
+            || word.ends_with("ch")
+            || word.ends_with("sh")
         {
             variants.push(format!("{}es", word));
         }
@@ -159,9 +165,8 @@ pub fn build_index_from_po_contents(po_contents: &[String]) -> AppResult<PoFileI
     let mut word_index: HashMap<String, Vec<usize>> = HashMap::new();
 
     for content in po_contents {
-        let catalog = polib::po_file::parse_from_reader(content.as_bytes()).map_err(|e| {
-            AppError::PoProcessing(format!("failed to parse PO content: {}", e))
-        })?;
+        let catalog = polib::po_file::parse_from_reader(content.as_bytes())
+            .map_err(|e| AppError::PoProcessing(format!("failed to parse PO content: {}", e)))?;
 
         for message in catalog.messages() {
             if !message.is_translated() || message.is_fuzzy() {
@@ -230,7 +235,10 @@ pub fn build_index_from_po_contents(po_contents: &[String]) -> AppResult<PoFileI
 
 impl PoFileIndex {
     pub fn search_terms(&self, terms: &[&str]) -> Vec<PoSearchResult> {
-        terms.iter().map(|term| self.search_single_term(term)).collect()
+        terms
+            .iter()
+            .map(|term| self.search_single_term(term))
+            .collect()
     }
 
     fn search_single_term(&self, term: &str) -> PoSearchResult {
@@ -463,13 +471,19 @@ mod tests {
     #[test]
     fn variants_us_not_stripped() {
         let v = variants("cactus");
-        assert!(!has_variant(&v, "cactu"), "cactus should not generate cactu");
+        assert!(
+            !has_variant(&v, "cactu"),
+            "cactus should not generate cactu"
+        );
     }
 
     #[test]
     fn variants_includes_original() {
         let v = variants("varg");
-        assert!(has_variant(&v, "varg"), "variants should always include the original");
+        assert!(
+            has_variant(&v, "varg"),
+            "variants should always include the original"
+        );
     }
 
     #[test]
@@ -489,7 +503,10 @@ mod tests {
         let index = load_test_index();
         assert!(!index.entries.is_empty(), "index should have entries");
         assert!(!index.exact_map.is_empty(), "exact_map should not be empty");
-        assert!(!index.word_index.is_empty(), "word_index should not be empty");
+        assert!(
+            !index.word_index.is_empty(),
+            "word_index should not be empty"
+        );
     }
 
     #[test]
@@ -498,7 +515,10 @@ mod tests {
         let result = index.search_single_term("Varg");
         assert!(!result.candidates.is_empty(), "Varg should have candidates");
         assert!(
-            result.candidates.iter().any(|c| c.original == "Varg" && c.translation == "座狼"),
+            result
+                .candidates
+                .iter()
+                .any(|c| c.original == "Varg" && c.translation == "座狼"),
             "should find Varg -> 座狼"
         );
     }
@@ -509,7 +529,10 @@ mod tests {
         let result = index.search_single_term("Nightmare Fuel");
         assert!(!result.candidates.is_empty());
         assert!(
-            result.candidates.iter().any(|c| c.original == "Nightmare Fuel" && c.translation == "噩梦燃料"),
+            result
+                .candidates
+                .iter()
+                .any(|c| c.original == "Nightmare Fuel" && c.translation == "噩梦燃料"),
             "should find Nightmare Fuel -> 噩梦燃料"
         );
     }
@@ -518,7 +541,10 @@ mod tests {
     fn search_variant_match_plural() {
         let index = load_test_index();
         let result = index.search_single_term("Vargs");
-        assert!(!result.candidates.is_empty(), "Vargs should find via variant");
+        assert!(
+            !result.candidates.is_empty(),
+            "Vargs should find via variant"
+        );
         assert!(
             result.candidates.iter().any(|c| c.original == "Varg"),
             "Vargs should match Varg entry"
@@ -538,14 +564,20 @@ mod tests {
     fn search_no_result() {
         let index = load_test_index();
         let result = index.search_single_term("NonExistentTerm");
-        assert!(result.candidates.is_empty(), "nonexistent term should have no candidates");
+        assert!(
+            result.candidates.is_empty(),
+            "nonexistent term should have no candidates"
+        );
     }
 
     #[test]
     fn search_grumble_bee() {
         let index = load_test_index();
         let result = index.search_single_term("Grumble Bees");
-        assert!(!result.candidates.is_empty(), "Grumble Bees should have candidates");
+        assert!(
+            !result.candidates.is_empty(),
+            "Grumble Bees should have candidates"
+        );
     }
 
     #[test]
@@ -565,7 +597,10 @@ mod tests {
         let result = index.search_single_term("Ocuvigil");
         assert!(!result.candidates.is_empty());
         assert!(
-            result.candidates.iter().any(|c| c.translation == "月眼守卫"),
+            result
+                .candidates
+                .iter()
+                .any(|c| c.translation == "月眼守卫"),
             "Ocuvigil should translate to 月眼守卫"
         );
     }
@@ -579,7 +614,8 @@ mod tests {
             assert!(
                 seen.insert((c.original.clone(), c.translation.clone())),
                 "duplicate candidate: original={}, translation={}",
-                c.original, c.translation
+                c.original,
+                c.translation
             );
         }
     }
@@ -588,16 +624,29 @@ mod tests {
     fn search_truncates_to_five() {
         let index = load_test_index();
         let result = index.search_single_term("Hound");
-        assert!(result.candidates.len() <= 5, "should have at most 5 candidates");
+        assert!(
+            result.candidates.len() <= 5,
+            "should have at most 5 candidates"
+        );
     }
 
     #[test]
     fn search_batch_test_terms() {
         let index = load_test_index();
         let terms = [
-            "Varg", "Nightmare Fuel", "Moleworm", "Ocuvigil", "Grumble Bees",
-            "Clockworks", "Evergreens", "Twiggy Trees", "Shoals", "Belongings",
-            "Void Masque", "Hounds", "Beard",
+            "Varg",
+            "Nightmare Fuel",
+            "Moleworm",
+            "Ocuvigil",
+            "Grumble Bees",
+            "Clockworks",
+            "Evergreens",
+            "Twiggy Trees",
+            "Shoals",
+            "Belongings",
+            "Void Masque",
+            "Hounds",
+            "Beard",
         ];
         for term in terms {
             let result = index.search_single_term(term);

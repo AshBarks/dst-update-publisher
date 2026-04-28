@@ -5,9 +5,7 @@ use common::{
     read_fixture, unique_key,
 };
 use dst_update_publisher::models::UpdateNotification;
-use dst_update_publisher::publisher::{
-    is_build_processed, mark_build_processed, publish_update,
-};
+use dst_update_publisher::publisher::{is_build_processed, mark_build_processed, publish_update};
 use dst_update_publisher::rss::{fetch_rss_updates, get_latest_pc_update};
 use dst_update_publisher::update_page::{fetch_update_page, get_version_info};
 
@@ -51,10 +49,9 @@ async fn full_pipeline_rss_to_redis() {
         .expect("fetch_rss_updates failed");
     let latest = get_latest_pc_update(&rss_items).expect("should have latest");
 
-    let is_processed =
-        is_build_processed(&mut redis_conn, &redis_dedupe_key, &latest.build_number)
-            .await
-            .expect("is_build_processed failed");
+    let is_processed = is_build_processed(&mut redis_conn, &redis_dedupe_key, &latest.build_number)
+        .await
+        .expect("is_build_processed failed");
     assert!(!is_processed, "should not be processed initially");
 
     let page_data = fetch_update_page(&config)
@@ -76,10 +73,9 @@ async fn full_pipeline_rss_to_redis() {
         .await
         .expect("mark_build_processed failed");
 
-    let is_processed =
-        is_build_processed(&mut redis_conn, &redis_dedupe_key, &latest.build_number)
-            .await
-            .expect("is_build_processed failed");
+    let is_processed = is_build_processed(&mut redis_conn, &redis_dedupe_key, &latest.build_number)
+        .await
+        .expect("is_build_processed failed");
     assert!(is_processed, "should be processed after full pipeline");
 
     cleanup_key(&mut redis_conn, &redis_dedupe_key).await;

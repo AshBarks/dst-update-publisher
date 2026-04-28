@@ -159,7 +159,10 @@ impl UpdateNotification {
         let glossary: HashMap<String, String> = translated
             .search_results
             .iter()
-            .filter_map(|r| r.best_match().map(|b| (r.term.clone(), b.translation.clone())))
+            .filter_map(|r| {
+                r.best_match()
+                    .map(|b| (r.term.clone(), b.translation.clone()))
+            })
             .collect();
 
         let channel = match page_entry.channel {
@@ -262,7 +265,8 @@ mod tests {
     fn is_pc_update_xbox_link() {
         let item = RssUpdateItem {
             build_number: "112100".into(),
-            link: "https://forums.kleientertainment.com/game-updates/dst_xboxone/112100-r2721/".into(),
+            link: "https://forums.kleientertainment.com/game-updates/dst_xboxone/112100-r2721/"
+                .into(),
             description_html: String::new(),
             pub_date: Utc::now(),
             revision: "2721".into(),
@@ -306,12 +310,10 @@ mod tests {
     fn best_match_no_exact_returns_first() {
         let result = PoSearchResult {
             term: "Vargs".into(),
-            candidates: vec![
-                PoTranslationEntry {
-                    original: "Varg".into(),
-                    translation: "座狼".into(),
-                },
-            ],
+            candidates: vec![PoTranslationEntry {
+                original: "Varg".into(),
+                translation: "座狼".into(),
+            }],
         };
         let best = result.best_match().unwrap();
         assert_eq!(best.original, "Varg");
@@ -427,14 +429,12 @@ mod tests {
     #[test]
     fn find_by_build_number() {
         let data = UpdatePageData {
-            entries: vec![
-                UpdatePageEntry {
-                    revision: "2722".into(),
-                    build_number: "724783".into(),
-                    channel: ReleaseChannel::Release,
-                    is_hotfix: false,
-                },
-            ],
+            entries: vec![UpdatePageEntry {
+                revision: "2722".into(),
+                build_number: "724783".into(),
+                channel: ReleaseChannel::Release,
+                is_hotfix: false,
+            }],
         };
         let found = data.find_by_build_number("724783");
         assert!(found.is_some());

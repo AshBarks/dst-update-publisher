@@ -10,8 +10,7 @@ async fn redis_pubsub_publish_and_receive() {
 
     let mut pub_conn = connect_test_redis().await;
 
-    let redis_url =
-        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
+    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
     let sub_client = redis::Client::open(redis_url).expect("redis client");
     let mut pubsub = sub_client
         .get_async_pubsub()

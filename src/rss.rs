@@ -42,7 +42,10 @@ mod tests {
         let items = parse_rss_items(RSS_XML).expect("failed to parse RSS");
         assert!(!items.is_empty(), "should find PC update items");
         for item in &items {
-            assert!(item.is_pc_update(), "all returned items should be PC updates");
+            assert!(
+                item.is_pc_update(),
+                "all returned items should be PC updates"
+            );
         }
     }
 
@@ -51,7 +54,10 @@ mod tests {
         let channel = rss::Channel::read_from(RSS_XML.as_bytes()).unwrap();
         let total = channel.items.len();
         let pc_items = parse_rss_items(RSS_XML).unwrap();
-        assert!(pc_items.len() < total, "PC items should be fewer than total items");
+        assert!(
+            pc_items.len() < total,
+            "PC items should be fewer than total items"
+        );
     }
 
     #[test]

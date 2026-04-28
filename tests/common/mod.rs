@@ -3,13 +3,12 @@
 use dst_update_publisher::models::{
     AppConfig, PoSearchResult, PoTranslationEntry, TranslatedAnnouncement,
 };
-use dst_update_publisher::po_search::{build_index_from_po_contents, PoFileIndex};
+use dst_update_publisher::po_search::{PoFileIndex, build_index_from_po_contents};
 use dst_update_publisher::publisher::connect_redis;
 use redis::aio::MultiplexedConnection;
 
 pub fn make_config(mock_rss_url: &str, mock_page_url: &str) -> AppConfig {
-    let redis_url =
-        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
+    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
     AppConfig {
         rss_url: mock_rss_url.to_string(),
         update_page_url: mock_page_url.to_string(),
@@ -30,8 +29,7 @@ pub fn make_config_with_redis(
     redis_channel: &str,
     redis_dedupe_key: &str,
 ) -> AppConfig {
-    let redis_url =
-        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
+    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
     AppConfig {
         rss_url: mock_rss_url.to_string(),
         update_page_url: mock_page_url.to_string(),
@@ -51,8 +49,7 @@ pub fn unique_key(prefix: &str) -> String {
 }
 
 pub async fn connect_test_redis() -> MultiplexedConnection {
-    let redis_url =
-        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
+    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
     let config = AppConfig {
         redis_url: redis_url.clone(),
         ..make_config("", "")
@@ -77,8 +74,8 @@ pub fn make_translated_announcement() -> TranslatedAnnouncement {
 }
 
 pub fn load_fixture_po_index() -> PoFileIndex {
-    let po_content = std::fs::read_to_string("tests/fixtures/chinese_s.po")
-        .expect("failed to read fixture PO");
+    let po_content =
+        std::fs::read_to_string("tests/fixtures/chinese_s.po").expect("failed to read fixture PO");
     build_index_from_po_contents(&[po_content]).expect("failed to build PO index from fixture")
 }
 
@@ -88,8 +85,5 @@ pub fn read_fixture(name: &str) -> String {
 }
 
 pub async fn cleanup_key(conn: &mut MultiplexedConnection, key: &str) {
-    let _ = redis::cmd("DEL")
-        .arg(key)
-        .exec_async(conn)
-        .await;
+    let _ = redis::cmd("DEL").arg(key).exec_async(conn).await;
 }
