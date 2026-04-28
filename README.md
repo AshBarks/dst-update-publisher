@@ -14,52 +14,6 @@
 - **去重机制**：使用 Redis 键记录已处理的 build number，避免重复翻译和推送同一版本
 - **双运行模式**：支持单次执行（`once`）和持续轮询（`poll`）两种运行方式
 
-## 项目结构
-
-```
-src/
-├── main.rs        # 入口，处理流程编排（单次/轮询模式）
-├── lib.rs         # 模块声明
-├── cli.rs         # CLI 参数解析（clap）
-├── config.rs      # 配置加载（环境变量 + .env）
-├── models.rs      # 数据模型（RssUpdateItem, UpdateNotification, AppConfig 等）
-├── error.rs       # 错误类型定义（thiserror）
-├── rss.rs         # RSS 源抓取与解析
-├── update_page.rs # 更新页面 HTML 抓取与解析（scraper）
-├── po_search.rs   # PO 文件索引加载与术语搜索
-├── translator.rs  # LLM 翻译逻辑（async-openai，含 tool calling）
-├── publisher.rs   # Redis 连接、去重检查、消息发布
-```
-
-## 依赖
-
-| 库 | 用途 |
-|---|---|
-| `reqwest` | HTTP 请求（RSS 源与更新页面抓取） |
-| `rss` | RSS XML 解析 |
-| `scraper` | HTML 解析与选择器查询 |
-| `zip` | ZIP 文件解压（游戏 PO 本地化包） |
-| `polib` | PO 文件格式解析 |
-| `redis` | Redis 客户端（Pub/Sub 与去重） |
-| `tokio` | 异步运行时 |
-| `serde` / `serde_json` | 序列化/反序列化 |
-| `tracing` / `tracing-subscriber` | 日志追踪 |
-| `dotenvy` | .env 文件加载 |
-| `thiserror` / `anyhow` | 错误处理 |
-| `async-openai` | OpenAI 兼容 LLM API 客户端 |
-| `chrono` | 时间处理 |
-| `url` | URL 解析 |
-| `clap` | CLI 参数解析 |
-| `html2text` | HTML 转纯文本 |
-| `once_cell` | 单次初始化 |
-
-## 环境要求
-
-- **Rust** 1.85+（edition 2024）
-- **Redis** 服务器（用于消息推送与去重）
-- **LLM API**：兼容 OpenAI Chat Completion API 的服务（支持 Function Calling），如 OpenAI、Azure OpenAI 或其他兼容服务
-- **游戏 PO 文件包**：DST 游戏本地化 scripts.zip（包含中文 PO 文件）
-
 ## 配置
 
 复制 `.env.example` 为 `.env`，根据实际情况填写：
@@ -139,19 +93,32 @@ RUST_LOG=dst_update_publisher=debug cargo run --release
 
 ```json
 {
-  "build_number": "...",
-  "revision": "...",
-  "channel": "release | beta",
-  "is_hotfix": true | false,
-  "original_description": "英文原文",
-  "translated_description": "中文译文",
+  "build_number": "615492",
+  "revision": "r378",
+  "channel": "release",
+  "is_hotfix": false,
+  "original_description": "英文原文...",
+  "translated_description": "中文译文...",
   "glossary": {
-    "术语英文": "术语中文"
+    "Varg": "座狼",
+    "Hound": "猎犬"
   },
-  "pub_date": "RFC3339 时间",
-  "link": "更新公告链接"
+  "pub_date": "2025-04-28T12:00:00+00:00",
+  "link": "https://forums.kleientertainment.com/game-updates/dst/update-615492-r378/"
 }
 ```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `build_number` | string | 版本构建号 |
+| `revision` | string | 版本修订号 |
+| `channel` | string | 发布通道：`"release"` 或 `"beta"` |
+| `is_hotfix` | boolean | 是否为热修复 |
+| `original_description` | string | 英文原文（Markdown 格式） |
+| `translated_description` | string | 中文译文（Markdown 格式） |
+| `glossary` | object | 术语表，key 为英文原文，value 为官方中文译名 |
+| `pub_date` | string | 发布时间（RFC 3339 格式） |
+| `link` | string | 更新公告链接 |
 
 ## 工作流程
 
@@ -164,69 +131,16 @@ RUST_LOG=dst_update_publisher=debug cargo run --release
           ↓
 4. 将 RSS 公告 HTML 转为纯文本
           ↓
-5. 调用 LLM 翻译：
-   a. 第一轮：LLM 通过 search_po_terms 工具提取并查询术语
-   b. 第二轮：将术语查询结果与原文一起发送给 LLM，生成最终译文
+5. 调用 LLM 翻译（标准 Function Calling 流程）：
+   a. LLM 通过 search_po_terms 工具提取并查询术语
+   b. 将工具调用结果以 tool message 归还
+   c. LLM 在同一上下文中生成最终译文
           ↓
 6. 组合 UpdateNotification（原文 + 译文 + 术语表 + 版本信息）
           ↓
 7. PUBLISH 到 Redis 通道
           ↓
 8. 在 Redis 中标记该 build 已处理
-```
-
-## 部署
-
-### Docker（推荐）
-
-```dockerfile
-FROM rust:1.85 AS builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release
-
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/dst-update-publisher /usr/local/bin/
-COPY .env.example /app/.env.example
-WORKDIR /app
-ENTRYPOINT ["dst-update-publisher"]
-```
-
-构建与运行：
-
-```bash
-docker build -t dst-update-publisher .
-docker run -d \
-  --name dst-update-publisher \
-  --env-file .env \
-  -v /path/to/scripts.zip:/app/scripts.zip \
-  dst-update-publisher -i 300
-```
-
-### 直接部署
-
-1. 编译 release 版本：`cargo build --release`
-2. 将二进制文件与 `.env` 文件部署到目标服务器
-3. 确保 Redis 服务可达
-4. 确保 PO 文件包路径正确
-5. 使用 systemd 或其他进程管理工具运行：
-
-```ini
-# systemd 示例
-[Unit]
-Description=DST Update Publisher
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/dst-update-publisher
-ExecStart=/opt/dst-update-publisher/dst-update-publisher -i 300
-Restart=always
-RestartSec=60
-
-[Install]
-WantedBy=multi-user.target
 ```
 
 ### 下游消费
