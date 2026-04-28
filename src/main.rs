@@ -89,11 +89,6 @@ async fn process_once(
 
     mark_build_processed(redis_conn, &config.redis_dedupe_key, &rss_item.build_number).await?;
 
-    tracing::info!(
-        "update published successfully for build {}",
-        notification.build_number
-    );
-
     Ok(ProcessOutcome::Published {
         build_number: notification.build_number,
     })

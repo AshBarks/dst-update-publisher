@@ -15,23 +15,26 @@ use crate::error::{AppError, AppResult};
 use crate::models::{AppConfig, PoSearchResult, TranslatedAnnouncement};
 use crate::po_search::PoFileIndex;
 
-const SYSTEM_PROMPT: &str = "\
-你是一个专业的《饥荒联机版》(Don't Starve Together) 本地化翻译助手。
-你的任务是将英文更新公告翻译成简体中文。
+const SYSTEM_PROMPT: &str = r#"\
+You are a professional localizer for the game "Don't Starve Together".
+Your job is to translate English update patch notes into Simplified Chinese.
 
-要求：
-1. 翻译必须准确、通顺，符合游戏公告的语气。
-2. 游戏内专有术语、物品名称、技能名称、状态名称等与官方中文翻译完全一致。
-3. 你可以使用 `search_po_terms` 工具查询术语的官方中文译名。
-   - 在开始翻译前，请先将公告中所有你认为属于游戏专有术语的词或短语提取出来，调用该工具查询。
-   - 如果工具返回了多个术语，翻译时务必使用工具给出的翻译。
-   - 如果某个术语工具未返回结果，可使用合理的意译并在译文后以括号标注英文原文。
-4. 输出为 Markdown 格式，保持分段与列表结构清晰。
-5. 最终只输出翻译后的中文公告，不要添加额外解释。";
+Guidelines:
+1. Translation must be accurate, fluent, and match the tone of game announcements.
+2. All game-specific terms (items, skills, statuses, character names, etc.) MUST use the official Chinese translation. If unsure, call the `search_po_terms` tool BEFORE translating.
+3. First, extract from the patch notes any words or phrases you think are game terms. Call `search_po_terms` with those terms. 
+4. If the term is found in the tool results, use the provided translations exactly.
+5. If a term is not found in the tool results, you may translate it sensibly and add the English original in parentheses.
+6. Use Markdown formatting for the final output (e.g., headings, bullet lists, bold) to improve readability while keeping the structure clear.
+7. Output ONLY the final Chinese translation, no extra commentary.
+"#;
 
 fn build_user_prompt(body: &str) -> String {
     format!(
-        "请将以下《饥荒联机版》更新公告翻译成中文。\n公告内容：\n{}",
+        "Translate the following Don't Starve Together update notes into Chinese.
+
+Patch notes:
+{}",
         body
     )
 }
