@@ -205,3 +205,240 @@ pub enum ProcessOutcome {
     AlreadyProcessed { build_number: String },
     NoUpdateAvailable,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_revision_standard_link() {
+        let rev = RssUpdateItem::extract_revision_from_link(
+            "https://forums.kleientertainment.com/game-updates/dst/724783-r2722/",
+        );
+        assert_eq!(rev, "2722");
+    }
+
+    #[test]
+    fn extract_revision_xbox_link() {
+        let rev = RssUpdateItem::extract_revision_from_link(
+            "https://forums.kleientertainment.com/game-updates/dst_xboxone/112100-r2721/",
+        );
+        assert_eq!(rev, "2721");
+    }
+
+    #[test]
+    fn extract_revision_no_revision() {
+        let rev = RssUpdateItem::extract_revision_from_link(
+            "https://forums.kleientertainment.com/game-updates/dst/",
+        );
+        assert_eq!(rev, "");
+    }
+
+    #[test]
+    fn extract_revision_empty_string() {
+        let rev = RssUpdateItem::extract_revision_from_link("");
+        assert_eq!(rev, "");
+    }
+
+    #[test]
+    fn extract_revision_invalid_url() {
+        let rev = RssUpdateItem::extract_revision_from_link("not a url");
+        assert_eq!(rev, "");
+    }
+
+    #[test]
+    fn is_pc_update_pc_link() {
+        let item = RssUpdateItem {
+            build_number: "724783".into(),
+            link: "https://forums.kleientertainment.com/game-updates/dst/724783-r2722/".into(),
+            description_html: String::new(),
+            pub_date: Utc::now(),
+            revision: "2722".into(),
+        };
+        assert!(item.is_pc_update());
+    }
+
+    #[test]
+    fn is_pc_update_xbox_link() {
+        let item = RssUpdateItem {
+            build_number: "112100".into(),
+            link: "https://forums.kleientertainment.com/game-updates/dst_xboxone/112100-r2721/".into(),
+            description_html: String::new(),
+            pub_date: Utc::now(),
+            revision: "2721".into(),
+        };
+        assert!(!item.is_pc_update());
+    }
+
+    #[test]
+    fn is_pc_update_ps4_link() {
+        let item = RssUpdateItem {
+            build_number: "3380".into(),
+            link: "https://forums.kleientertainment.com/game-updates/dst_ps4/3380-r2719/".into(),
+            description_html: String::new(),
+            pub_date: Utc::now(),
+            revision: "2719".into(),
+        };
+        assert!(!item.is_pc_update());
+    }
+
+    #[test]
+    fn best_match_exact() {
+        let result = PoSearchResult {
+            term: "Varg".into(),
+            candidates: vec![
+                PoTranslationEntry {
+                    original: "Varg".into(),
+                    translation: "座狼".into(),
+                },
+                PoTranslationEntry {
+                    original: "Vargling".into(),
+                    translation: "座狼崽".into(),
+                },
+            ],
+        };
+        let best = result.best_match().unwrap();
+        assert_eq!(best.original, "Varg");
+        assert_eq!(best.translation, "座狼");
+    }
+
+    #[test]
+    fn best_match_no_exact_returns_first() {
+        let result = PoSearchResult {
+            term: "Vargs".into(),
+            candidates: vec![
+                PoTranslationEntry {
+                    original: "Varg".into(),
+                    translation: "座狼".into(),
+                },
+            ],
+        };
+        let best = result.best_match().unwrap();
+        assert_eq!(best.original, "Varg");
+    }
+
+    #[test]
+    fn best_match_empty_candidates() {
+        let result = PoSearchResult {
+            term: "Varg".into(),
+            candidates: vec![],
+        };
+        assert!(result.best_match().is_none());
+    }
+
+    #[test]
+    fn compose_notification_fields() {
+        let rss_item = RssUpdateItem {
+            build_number: "724783".into(),
+            link: "https://forums.kleientertainment.com/game-updates/dst/724783-r2722/".into(),
+            description_html: String::new(),
+            pub_date: DateTime::parse_from_rfc3339("2025-04-28T12:00:00Z")
+                .unwrap()
+                .to_utc(),
+            revision: "2722".into(),
+        };
+
+        let page_entry = UpdatePageEntry {
+            revision: "2722".into(),
+            build_number: "724783".into(),
+            channel: ReleaseChannel::Release,
+            is_hotfix: false,
+        };
+
+        let translated = TranslatedAnnouncement {
+            original_text: "original".into(),
+            translated_text: "翻译".into(),
+            search_results: vec![PoSearchResult {
+                term: "Varg".into(),
+                candidates: vec![PoTranslationEntry {
+                    original: "Varg".into(),
+                    translation: "座狼".into(),
+                }],
+            }],
+        };
+
+        let notification = UpdateNotification::compose(&rss_item, &page_entry, &translated);
+
+        assert_eq!(notification.build_number, "724783");
+        assert_eq!(notification.revision, "2722");
+        assert_eq!(notification.channel, "release");
+        assert!(!notification.is_hotfix);
+        assert_eq!(notification.original_description, "original");
+        assert_eq!(notification.translated_description, "翻译");
+        assert_eq!(notification.glossary.get("Varg").unwrap(), "座狼");
+        assert!(notification.pub_date.contains("2025"));
+        assert!(notification.link.contains("724783"));
+    }
+
+    #[test]
+    fn compose_notification_beta_hotfix() {
+        let rss_item = RssUpdateItem {
+            build_number: "724783".into(),
+            link: "https://forums.kleientertainment.com/game-updates/dst/724783-r2722/".into(),
+            description_html: String::new(),
+            pub_date: Utc::now(),
+            revision: "2722".into(),
+        };
+
+        let page_entry = UpdatePageEntry {
+            revision: "2722".into(),
+            build_number: "724783".into(),
+            channel: ReleaseChannel::Beta,
+            is_hotfix: true,
+        };
+
+        let translated = TranslatedAnnouncement {
+            original_text: String::new(),
+            translated_text: String::new(),
+            search_results: vec![],
+        };
+
+        let notification = UpdateNotification::compose(&rss_item, &page_entry, &translated);
+
+        assert_eq!(notification.channel, "beta");
+        assert!(notification.is_hotfix);
+        assert!(notification.glossary.is_empty());
+    }
+
+    #[test]
+    fn find_by_revision() {
+        let data = UpdatePageData {
+            entries: vec![
+                UpdatePageEntry {
+                    revision: "2722".into(),
+                    build_number: "724783".into(),
+                    channel: ReleaseChannel::Release,
+                    is_hotfix: false,
+                },
+                UpdatePageEntry {
+                    revision: "2714".into(),
+                    build_number: "722832".into(),
+                    channel: ReleaseChannel::Release,
+                    is_hotfix: false,
+                },
+            ],
+        };
+        let found = data.find_by_revision("2722");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().build_number, "724783");
+        assert!(data.find_by_revision("9999").is_none());
+    }
+
+    #[test]
+    fn find_by_build_number() {
+        let data = UpdatePageData {
+            entries: vec![
+                UpdatePageEntry {
+                    revision: "2722".into(),
+                    build_number: "724783".into(),
+                    channel: ReleaseChannel::Release,
+                    is_hotfix: false,
+                },
+            ],
+        };
+        let found = data.find_by_build_number("724783");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().revision, "2722");
+        assert!(data.find_by_build_number("999999").is_none());
+    }
+}

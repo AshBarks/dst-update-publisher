@@ -9,18 +9,18 @@ fn load_dotenv() {
             .ok()
             .and_then(|p| p.parent().map(|d| d.join(".env")));
 
-        if let Some(path) = exe_dir {
-            if path.exists() {
-                dotenvy::from_path(&path).ok();
-                return;
-            }
+        if let Some(path) = exe_dir
+            && path.exists()
+        {
+            dotenvy::from_path(&path).ok();
+            return;
         }
 
         let cwd_env = std::env::current_dir().ok().map(|d| d.join(".env"));
-        if let Some(path) = cwd_env {
-            if path.exists() {
-                dotenvy::from_path(&path).ok();
-            }
+        if let Some(path) = cwd_env
+            && path.exists()
+        {
+            dotenvy::from_path(&path).ok();
         }
     }
 }

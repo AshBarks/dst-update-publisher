@@ -96,3 +96,76 @@ pub fn get_version_info(
             build_number, revision, page_data
         )))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const UPDATE_HTML: &str = include_str!("../tests/fixtures/update.html");
+
+    #[test]
+    fn parse_update_page_has_entries() {
+        let data = parse_update_page_html(UPDATE_HTML).expect("failed to parse update page");
+        assert!(!data.entries.is_empty(), "should have entries");
+    }
+
+    #[test]
+    fn parse_update_page_release_entry() {
+        let data = parse_update_page_html(UPDATE_HTML).unwrap();
+        let entry = data.find_by_revision("2714").expect("should find revision 2714");
+        assert!(matches!(entry.channel, ReleaseChannel::Release));
+        assert!(!entry.is_hotfix);
+    }
+
+    #[test]
+    fn parse_update_page_beta_hotfix_entry() {
+        let data = parse_update_page_html(UPDATE_HTML).unwrap();
+        let entry = data.find_by_revision("2722").expect("should find revision 2722");
+        assert!(matches!(entry.channel, ReleaseChannel::Beta));
+        assert!(entry.is_hotfix);
+    }
+
+    #[test]
+    fn parse_update_page_release_hotfix_entry() {
+        let data = parse_update_page_html(UPDATE_HTML).unwrap();
+        let entry = data.find_by_revision("2715").expect("should find revision 2715");
+        assert!(matches!(entry.channel, ReleaseChannel::Release));
+        assert!(entry.is_hotfix);
+    }
+
+    #[test]
+    fn parse_update_page_beta_non_hotfix() {
+        let data = parse_update_page_html(UPDATE_HTML).unwrap();
+        let entry = data.find_by_revision("2693").expect("should find revision 2693");
+        assert!(matches!(entry.channel, ReleaseChannel::Beta));
+        assert!(!entry.is_hotfix);
+    }
+
+    #[test]
+    fn parse_update_page_build_number() {
+        let data = parse_update_page_html(UPDATE_HTML).unwrap();
+        let entry = data.find_by_revision("2722").expect("should find revision 2722");
+        assert_eq!(entry.build_number, "724783");
+    }
+
+    #[test]
+    fn get_version_info_found() {
+        let data = parse_update_page_html(UPDATE_HTML).unwrap();
+        let result = get_version_info(&data, "2722", "724783");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().revision, "2722");
+    }
+
+    #[test]
+    fn get_version_info_not_found() {
+        let data = parse_update_page_html(UPDATE_HTML).unwrap();
+        let result = get_version_info(&data, "9999", "999999");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_update_page_empty_html() {
+        let data = parse_update_page_html("<html><body></body></html>").unwrap();
+        assert!(data.entries.is_empty());
+    }
+}

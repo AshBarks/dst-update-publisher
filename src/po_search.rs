@@ -129,9 +129,7 @@ pub fn load_po_index(zip_path: &str, po_files: &[String]) -> AppResult<PoFileInd
         AppError::ZipProcessing(format!("failed to read ZIP '{}': {}", zip_path, e))
     })?;
 
-    let mut all_entries: Vec<PoIndexEntry> = Vec::new();
-    let mut exact_map: HashMap<String, Vec<usize>> = HashMap::new();
-    let mut word_index: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut contents: Vec<String> = Vec::new();
 
     for po_path in po_files {
         let mut zip_file = match archive.by_name(po_path) {
@@ -149,8 +147,20 @@ pub fn load_po_index(zip_path: &str, po_files: &[String]) -> AppResult<PoFileInd
             .read_to_string(&mut content)
             .map_err(|e| AppError::PoProcessing(format!("failed to read '{}': {}", po_path, e)))?;
 
+        contents.push(content);
+    }
+
+    build_index_from_po_contents(&contents)
+}
+
+pub fn build_index_from_po_contents(po_contents: &[String]) -> AppResult<PoFileIndex> {
+    let mut all_entries: Vec<PoIndexEntry> = Vec::new();
+    let mut exact_map: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut word_index: HashMap<String, Vec<usize>> = HashMap::new();
+
+    for content in po_contents {
         let catalog = polib::po_file::parse_from_reader(content.as_bytes()).map_err(|e| {
-            AppError::PoProcessing(format!("failed to parse PO '{}': {}", po_path, e))
+            AppError::PoProcessing(format!("failed to parse PO content: {}", e))
         })?;
 
         for message in catalog.messages() {
@@ -313,6 +323,289 @@ impl PoFileIndex {
         PoSearchResult {
             term: term.to_string(),
             candidates: candidates.into_iter().map(|(_, e)| e).collect(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn variants(word: &str) -> Vec<String> {
+        generate_variants(word)
+    }
+
+    fn has_variant(word_variants: &[String], expected: &str) -> bool {
+        word_variants.iter().any(|v| v == expected)
+    }
+
+    #[test]
+    fn variants_adds_s() {
+        let v = variants("varg");
+        assert!(has_variant(&v, "vargs"), "varg should generate vargs");
+    }
+
+    #[test]
+    fn variants_strips_s() {
+        let v = variants("vargs");
+        assert!(has_variant(&v, "varg"), "vargs should generate varg");
+    }
+
+    #[test]
+    fn variants_ies_to_y() {
+        let v = variants("berries");
+        assert!(has_variant(&v, "berry"), "berries should generate berry");
+    }
+
+    #[test]
+    fn variants_y_to_ies() {
+        let v = variants("berry");
+        assert!(has_variant(&v, "berries"), "berry should generate berries");
+    }
+
+    #[test]
+    fn variants_ves_to_f() {
+        let v = variants("wolves");
+        assert!(has_variant(&v, "wolf"), "wolves should generate wolf");
+        assert!(has_variant(&v, "wolfe"), "wolves should generate wolfe");
+    }
+
+    #[test]
+    fn variants_f_to_ves() {
+        let v = variants("wolf");
+        assert!(has_variant(&v, "wolves"), "wolf should generate wolves");
+    }
+
+    #[test]
+    fn variants_fe_to_ves() {
+        let v = variants("knife");
+        assert!(has_variant(&v, "knives"), "knife should generate knives");
+    }
+
+    #[test]
+    fn variants_strips_es_suffix() {
+        let v = variants("bushes");
+        assert!(has_variant(&v, "bush"), "bushes should generate bush");
+    }
+
+    #[test]
+    fn variants_adds_es() {
+        let v = variants("bush");
+        assert!(has_variant(&v, "bushes"), "bush should generate bushes");
+    }
+
+    #[test]
+    fn variants_strips_ing() {
+        let v = variants("healing");
+        assert!(has_variant(&v, "heal"), "healing should generate heal");
+    }
+
+    #[test]
+    fn variants_strips_ing_doubled_consonant() {
+        let v = variants("running");
+        assert!(has_variant(&v, "run"), "running should generate run");
+    }
+
+    #[test]
+    fn variants_ing_adds_e() {
+        let v = variants("healing");
+        assert!(has_variant(&v, "heale"), "healing should generate heale");
+    }
+
+    #[test]
+    fn variants_strips_ed() {
+        let v = variants("cooked");
+        assert!(has_variant(&v, "cook"), "cooked should generate cook");
+    }
+
+    #[test]
+    fn variants_strips_ed_doubled_consonant() {
+        let v = variants("stopped");
+        assert!(has_variant(&v, "stop"), "stopped should generate stop");
+    }
+
+    #[test]
+    fn variants_ed_adds_e() {
+        let v = variants("cooked");
+        assert!(has_variant(&v, "cooke"), "cooked should generate cooke");
+    }
+
+    #[test]
+    fn variants_strips_ly() {
+        let v = variants("recently");
+        assert!(has_variant(&v, "recent"), "recently should generate recent");
+    }
+
+    #[test]
+    fn variants_strips_er() {
+        let v = variants("heater");
+        assert!(has_variant(&v, "heat"), "heater should generate heat");
+    }
+
+    #[test]
+    fn variants_strips_est() {
+        let v = variants("fastest");
+        assert!(has_variant(&v, "fast"), "fastest should generate fast");
+    }
+
+    #[test]
+    fn variants_short_word_no_transform() {
+        let v = variants("ab");
+        assert_eq!(v, vec!["ab"], "short words should only return themselves");
+    }
+
+    #[test]
+    fn variants_ss_not_stripped() {
+        let v = variants("boss");
+        assert!(!has_variant(&v, "bos"), "boss should not generate bos");
+    }
+
+    #[test]
+    fn variants_us_not_stripped() {
+        let v = variants("cactus");
+        assert!(!has_variant(&v, "cactu"), "cactus should not generate cactu");
+    }
+
+    #[test]
+    fn variants_includes_original() {
+        let v = variants("varg");
+        assert!(has_variant(&v, "varg"), "variants should always include the original");
+    }
+
+    #[test]
+    fn variants_strips_fe_suffix() {
+        let v = variants("knife");
+        assert!(has_variant(&v, "knives"));
+    }
+
+    fn load_test_index() -> PoFileIndex {
+        let po_content = std::fs::read_to_string("tests/fixtures/chinese_s.po")
+            .expect("failed to read tests/fixtures/chinese_s.po");
+        build_index_from_po_contents(&[po_content]).expect("failed to build test index")
+    }
+
+    #[test]
+    fn index_builds_from_po_file() {
+        let index = load_test_index();
+        assert!(!index.entries.is_empty(), "index should have entries");
+        assert!(!index.exact_map.is_empty(), "exact_map should not be empty");
+        assert!(!index.word_index.is_empty(), "word_index should not be empty");
+    }
+
+    #[test]
+    fn search_exact_match_simple() {
+        let index = load_test_index();
+        let result = index.search_single_term("Varg");
+        assert!(!result.candidates.is_empty(), "Varg should have candidates");
+        assert!(
+            result.candidates.iter().any(|c| c.original == "Varg" && c.translation == "座狼"),
+            "should find Varg -> 座狼"
+        );
+    }
+
+    #[test]
+    fn search_exact_match_multiword() {
+        let index = load_test_index();
+        let result = index.search_single_term("Nightmare Fuel");
+        assert!(!result.candidates.is_empty());
+        assert!(
+            result.candidates.iter().any(|c| c.original == "Nightmare Fuel" && c.translation == "噩梦燃料"),
+            "should find Nightmare Fuel -> 噩梦燃料"
+        );
+    }
+
+    #[test]
+    fn search_variant_match_plural() {
+        let index = load_test_index();
+        let result = index.search_single_term("Vargs");
+        assert!(!result.candidates.is_empty(), "Vargs should find via variant");
+        assert!(
+            result.candidates.iter().any(|c| c.original == "Varg"),
+            "Vargs should match Varg entry"
+        );
+    }
+
+    #[test]
+    fn search_case_insensitive() {
+        let index = load_test_index();
+        let r1 = index.search_single_term("varg");
+        let r2 = index.search_single_term("VARG");
+        assert!(!r1.candidates.is_empty(), "lowercase varg should match");
+        assert!(!r2.candidates.is_empty(), "uppercase VARG should match");
+    }
+
+    #[test]
+    fn search_no_result() {
+        let index = load_test_index();
+        let result = index.search_single_term("NonExistentTerm");
+        assert!(result.candidates.is_empty(), "nonexistent term should have no candidates");
+    }
+
+    #[test]
+    fn search_grumble_bee() {
+        let index = load_test_index();
+        let result = index.search_single_term("Grumble Bees");
+        assert!(!result.candidates.is_empty(), "Grumble Bees should have candidates");
+    }
+
+    #[test]
+    fn search_moleworm() {
+        let index = load_test_index();
+        let result = index.search_single_term("Moleworm");
+        assert!(!result.candidates.is_empty());
+        assert!(
+            result.candidates.iter().any(|c| c.translation == "鼹鼠"),
+            "Moleworm should translate to 鼹鼠"
+        );
+    }
+
+    #[test]
+    fn search_ocuvigil() {
+        let index = load_test_index();
+        let result = index.search_single_term("Ocuvigil");
+        assert!(!result.candidates.is_empty());
+        assert!(
+            result.candidates.iter().any(|c| c.translation == "月眼守卫"),
+            "Ocuvigil should translate to 月眼守卫"
+        );
+    }
+
+    #[test]
+    fn search_dedup_candidates() {
+        let index = load_test_index();
+        let result = index.search_single_term("Moleworm");
+        let mut seen = HashSet::new();
+        for c in &result.candidates {
+            assert!(
+                seen.insert((c.original.clone(), c.translation.clone())),
+                "duplicate candidate: original={}, translation={}",
+                c.original, c.translation
+            );
+        }
+    }
+
+    #[test]
+    fn search_truncates_to_five() {
+        let index = load_test_index();
+        let result = index.search_single_term("Hound");
+        assert!(result.candidates.len() <= 5, "should have at most 5 candidates");
+    }
+
+    #[test]
+    fn search_batch_test_terms() {
+        let index = load_test_index();
+        let terms = [
+            "Varg", "Nightmare Fuel", "Moleworm", "Ocuvigil", "Grumble Bees",
+            "Clockworks", "Evergreens", "Twiggy Trees", "Shoals", "Belongings",
+            "Void Masque", "Hounds", "Beard",
+        ];
+        for term in terms {
+            let result = index.search_single_term(term);
+            assert!(
+                !result.candidates.is_empty(),
+                "term '{}' should have at least one candidate",
+                term
+            );
         }
     }
 }
