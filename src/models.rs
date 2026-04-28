@@ -109,13 +109,13 @@ impl UpdatePageData {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PoTranslationEntry {
     pub original: String,
     pub translation: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PoSearchResult {
     pub term: String,
     pub candidates: Vec<PoTranslationEntry>,

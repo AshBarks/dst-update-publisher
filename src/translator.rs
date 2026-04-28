@@ -2,9 +2,11 @@ use async_openai::{
     Client,
     config::OpenAIConfig,
     types::{
-        ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
-        ChatCompletionRequestUserMessageArgs, ChatCompletionTool, ChatCompletionToolArgs,
-        ChatCompletionToolType, CreateChatCompletionRequestArgs, FunctionObjectArgs,
+        ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
+        ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs,
+        ChatCompletionRequestToolMessageContent, ChatCompletionRequestUserMessageArgs,
+        ChatCompletionTool, ChatCompletionToolArgs, ChatCompletionToolType,
+        CreateChatCompletionRequestArgs, FunctionObjectArgs,
     },
 };
 use serde_json::json;
@@ -31,13 +33,6 @@ fn build_user_prompt(body: &str) -> String {
     format!(
         "请将以下《饥荒联机版》更新公告翻译成中文。\n公告内容：\n{}",
         body
-    )
-}
-
-fn build_augmented_user_prompt(body: &str, tool_results: &str) -> String {
-    format!(
-        "请将以下《饥荒联机版》更新公告翻译成中文。\n\n以下是工具查询到的术语翻译参考：\n{}\n\n公告内容：\n{}",
-        tool_results, body
     )
 }
 
@@ -75,6 +70,26 @@ fn build_tools() -> AppResult<Vec<ChatCompletionTool>> {
     Ok(vec![tool])
 }
 
+fn execute_tool_call(
+    tool_call: &async_openai::types::ChatCompletionMessageToolCall,
+    po_index: &PoFileIndex,
+) -> AppResult<(Vec<PoSearchResult>, String)> {
+    let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
+        .map_err(|e| AppError::LlmResponseParse(format!("failed to parse tool args: {}", e)))?;
+
+    let terms: Vec<&str> = args["terms"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<&str>>())
+        .unwrap_or_default();
+
+    let search_results = po_index.search_terms(&terms);
+
+    let tool_output = serde_json::to_string(&search_results)
+        .map_err(AppError::Serialization)?;
+
+    Ok((search_results, tool_output))
+}
+
 pub async fn full_translate(
     client: &Client<OpenAIConfig>,
     config: &AppConfig,
@@ -83,7 +98,7 @@ pub async fn full_translate(
 ) -> AppResult<TranslatedAnnouncement> {
     let tools = build_tools()?;
 
-    let first_messages: Vec<ChatCompletionRequestMessage> = vec![
+    let mut messages: Vec<ChatCompletionRequestMessage> = vec![
         ChatCompletionRequestSystemMessageArgs::default()
             .content(SYSTEM_PROMPT)
             .build()
@@ -103,11 +118,10 @@ pub async fn full_translate(
         .create(
             CreateChatCompletionRequestArgs::default()
                 .model(&config.llm_model)
-                .messages(first_messages)
-                .tools(tools)
+                .messages(messages.clone())
+                .tools(tools.clone())
                 .build()
-                .map_err(|e| AppError::LlmApi(format!("failed to build request: {}", e)))?
-                .into(),
+                .map_err(|e| AppError::LlmApi(format!("failed to build request: {}", e)))?,
         )
         .await
         .map_err(|e| AppError::LlmApi(format!("LLM API call failed: {}", e)))?;
@@ -119,97 +133,96 @@ pub async fn full_translate(
             "no choices in response".to_string(),
         ))?;
 
-    let mut search_results_collected: Vec<PoSearchResult> = Vec::new();
-    let mut tool_result_lines: Vec<String> = Vec::new();
+    let first_message = &first_choice.message;
 
-    if let Some(tool_calls) = &first_choice.message.tool_calls {
-        for tool_call in tool_calls {
+    let mut search_results_collected: Vec<PoSearchResult> = Vec::new();
+
+    let tool_calls = first_message.tool_calls.clone();
+
+    if let Some(tool_calls) = tool_calls {
+        let assistant_msg = ChatCompletionRequestAssistantMessageArgs::default()
+            .tool_calls(tool_calls.clone())
+            .build()
+            .map_err(|e| AppError::LlmApi(format!("failed to build assistant message: {}", e)))?;
+        messages.push(assistant_msg.into());
+
+        for tool_call in &tool_calls {
             let function_name = &tool_call.function.name;
-            let arguments_str = &tool_call.function.arguments;
 
             tracing::info!(
                 "LLM called tool: {} with args: {}",
                 function_name,
-                arguments_str
+                tool_call.function.arguments
             );
 
             if function_name == "search_po_terms" {
-                let args: serde_json::Value = serde_json::from_str(arguments_str).map_err(|e| {
-                    AppError::LlmResponseParse(format!("failed to parse tool args: {}", e))
-                })?;
+                let (search_results, tool_output) =
+                    execute_tool_call(tool_call, po_index)?;
 
-                let terms: Vec<&str> = args["terms"]
-                    .as_array()
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<&str>>())
-                    .unwrap_or_default();
+                search_results_collected.extend(search_results);
 
-                let search_results = po_index.search_terms(&terms);
+                tracing::info!(
+                    "got {} search result entries for tool_call_id={}",
+                    search_results_collected.len(),
+                    tool_call.id
+                );
 
-                for (term, result) in terms.iter().zip(search_results) {
-                    if result.candidates.is_empty() {
-                        tool_result_lines.push(format!("{} → (未找到官方翻译)", term));
-                    } else {
-                        let entries: Vec<String> = result
-                            .candidates
-                            .iter()
-                            .map(|c| format!("{} → {}", c.original, c.translation))
-                            .collect();
-                        tool_result_lines.push(entries.join("\n  "));
-                    }
-                    search_results_collected.push(result);
-                }
+                let tool_msg = ChatCompletionRequestToolMessageArgs::default()
+                    .tool_call_id(&tool_call.id)
+                    .content(ChatCompletionRequestToolMessageContent::Text(tool_output))
+                    .build()
+                    .map_err(|e| {
+                        AppError::LlmApi(format!("failed to build tool message: {}", e))
+                    })?;
+                messages.push(tool_msg.into());
             }
         }
+
+        tracing::info!(
+            "total {} search results, calling LLM for final translation in same context",
+            search_results_collected.len()
+        );
+
+        let second_response = client
+            .chat()
+            .create(
+                CreateChatCompletionRequestArgs::default()
+                    .model(&config.llm_model)
+                    .messages(messages)
+                    .build()
+                    .map_err(|e| {
+                        AppError::LlmApi(format!("failed to build request: {}", e))
+                    })?,
+            )
+            .await
+            .map_err(|e| AppError::LlmApi(format!("LLM API call failed: {}", e)))?;
+
+        let second_choice = second_response
+            .choices
+            .first()
+            .ok_or(AppError::LlmResponseParse(
+                "no choices in final response".to_string(),
+            ))?;
+
+        let translated_text =
+            second_choice.message.content.clone().unwrap_or_default();
+
+        Ok(TranslatedAnnouncement {
+            original_text: announcement.to_string(),
+            translated_text,
+            search_results: search_results_collected,
+        })
+    } else {
+        let translated_text = first_message.content.clone().unwrap_or_default();
+
+        tracing::info!(
+            "LLM responded without tool calls, using direct response as translation"
+        );
+
+        Ok(TranslatedAnnouncement {
+            original_text: announcement.to_string(),
+            translated_text,
+            search_results: search_results_collected,
+        })
     }
-
-    let tool_results_text = tool_result_lines.join("\n");
-
-    tracing::info!(
-        "got {} tool result entries, calling LLM for final translation",
-        tool_result_lines.len()
-    );
-
-    let second_messages: Vec<ChatCompletionRequestMessage> = vec![
-        ChatCompletionRequestSystemMessageArgs::default()
-            .content(SYSTEM_PROMPT)
-            .build()
-            .map_err(|e| AppError::LlmApi(format!("failed to build system message: {}", e)))?
-            .into(),
-        ChatCompletionRequestUserMessageArgs::default()
-            .content(build_augmented_user_prompt(
-                announcement,
-                &tool_results_text,
-            ))
-            .build()
-            .map_err(|e| AppError::LlmApi(format!("failed to build user message: {}", e)))?
-            .into(),
-    ];
-
-    let second_response = client
-        .chat()
-        .create(
-            CreateChatCompletionRequestArgs::default()
-                .model(&config.llm_model)
-                .messages(second_messages)
-                .build()
-                .map_err(|e| AppError::LlmApi(format!("failed to build request: {}", e)))?
-                .into(),
-        )
-        .await
-        .map_err(|e| AppError::LlmApi(format!("LLM API call failed: {}", e)))?;
-
-    let second_choice = second_response
-        .choices
-        .first()
-        .ok_or(AppError::LlmResponseParse(
-            "no choices in final response".to_string(),
-        ))?;
-
-    let translated_text = second_choice.message.content.clone().unwrap_or_default();
-
-    Ok(TranslatedAnnouncement {
-        original_text: announcement.to_string(),
-        translated_text,
-        search_results: search_results_collected,
-    })
 }
