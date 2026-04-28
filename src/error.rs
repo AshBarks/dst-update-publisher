@@ -32,9 +32,6 @@ pub enum AppError {
     #[error("Serialization failed: {0}")]
     Serialization(#[from] serde_json::Error),
 
-    #[error("No new update found")]
-    NoNewUpdate,
-
     #[error("Update page entry not found for revision: {0}")]
     RevisionNotFound(String),
 

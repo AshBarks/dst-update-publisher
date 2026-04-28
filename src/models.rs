@@ -198,3 +198,10 @@ pub struct AppConfig {
     pub po_zip_path: String,
     pub po_zip_po_files: Vec<String>,
 }
+
+#[derive(Debug, Clone)]
+pub enum ProcessOutcome {
+    Published { build_number: String },
+    AlreadyProcessed { build_number: String },
+    NoUpdateAvailable,
+}

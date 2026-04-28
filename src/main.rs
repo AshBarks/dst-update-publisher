@@ -1,7 +1,7 @@
 use dst_update_publisher::cli::{CliArgs, RunMode};
 use dst_update_publisher::config::load_config;
 use dst_update_publisher::error::{AppError, AppResult};
-use dst_update_publisher::models::{AppConfig, ReleaseChannel, UpdateNotification};
+use dst_update_publisher::models::{AppConfig, ProcessOutcome, ReleaseChannel, UpdateNotification};
 use dst_update_publisher::po_search::{PoFileIndex, load_po_index};
 use dst_update_publisher::publisher::{
     connect_redis, is_build_processed, mark_build_processed, publish_update,
@@ -17,7 +17,7 @@ async fn process_once(
     config: &AppConfig,
     po_index: &PoFileIndex,
     redis_conn: &mut redis::aio::MultiplexedConnection,
-) -> AppResult<()> {
+) -> AppResult<ProcessOutcome> {
     tracing::info!("starting single run processing");
 
     let rss_items = fetch_rss_updates(config).await?;
@@ -27,7 +27,7 @@ async fn process_once(
         Some(item) => item,
         None => {
             tracing::warn!("no PC update found in RSS feed");
-            return Err(AppError::NoNewUpdate);
+            return Ok(ProcessOutcome::NoUpdateAvailable);
         }
     };
 
@@ -43,7 +43,9 @@ async fn process_once(
             "build {} already processed, skipping",
             rss_item.build_number
         );
-        return Err(AppError::NoNewUpdate);
+        return Ok(ProcessOutcome::AlreadyProcessed {
+            build_number: rss_item.build_number.clone(),
+        });
     }
 
     let page_data = fetch_update_page(config).await?;
@@ -89,10 +91,12 @@ async fn process_once(
 
     tracing::info!(
         "update published successfully for build {}",
-        rss_item.build_number
+        notification.build_number
     );
 
-    Ok(())
+    Ok(ProcessOutcome::Published {
+        build_number: notification.build_number,
+    })
 }
 
 async fn run_poll_loop(
@@ -103,8 +107,15 @@ async fn run_poll_loop(
 ) -> AppResult<()> {
     loop {
         match process_once(config, po_index, redis_conn).await {
-            Ok(()) => tracing::info!("processing completed successfully"),
-            Err(AppError::NoNewUpdate) => tracing::info!("no new update, will check again"),
+            Ok(ProcessOutcome::Published { build_number }) => {
+                tracing::info!("update published successfully for build {}", build_number)
+            }
+            Ok(ProcessOutcome::AlreadyProcessed { build_number }) => {
+                tracing::info!("build {} already processed, will check later", build_number)
+            }
+            Ok(ProcessOutcome::NoUpdateAvailable) => {
+                tracing::info!("no PC update found, will check later")
+            }
             Err(e) => tracing::error!("processing failed: {}", e),
         }
         tracing::info!("sleeping for {} seconds before next check", interval_secs);
@@ -129,7 +140,18 @@ async fn main() -> AppResult<()> {
 
     match run_mode {
         RunMode::Once => {
-            process_once(&config, &po_index, &mut redis_conn).await?;
+            let outcome = process_once(&config, &po_index, &mut redis_conn).await?;
+            match outcome {
+                ProcessOutcome::Published { build_number } => {
+                    tracing::info!("update published successfully for build {}", build_number)
+                }
+                ProcessOutcome::AlreadyProcessed { build_number } => {
+                    tracing::info!("build {} already processed, nothing to do", build_number)
+                }
+                ProcessOutcome::NoUpdateAvailable => {
+                    tracing::info!("no PC update found, nothing to do")
+                }
+            }
         }
         RunMode::Poll { interval_secs } => {
             run_poll_loop(&config, &po_index, &mut redis_conn, interval_secs).await?;
