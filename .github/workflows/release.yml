@@ -37,11 +37,20 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install cross-compilation tools (Linux ARM64)
+      - name: Install cross-compilation dependencies
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
+          sudo dpkg --add-architecture arm64
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu \
+            libssl-dev \
+            libssl-dev:arm64
+
+      - name: Set cross-compilation linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Build binary
         run: cargo build --release --target ${{ matrix.target }}
