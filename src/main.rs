@@ -1,6 +1,7 @@
 use dst_update_publisher::cli::{CliArgs, RunMode};
 use dst_update_publisher::config::load_config;
 use dst_update_publisher::error::{AppError, AppResult};
+use dst_update_publisher::json_translator::translate_json_file;
 use dst_update_publisher::models::{AppConfig, ProcessOutcome, ReleaseChannel, UpdateNotification};
 use dst_update_publisher::po_search::{PoFileIndex, load_po_index};
 use dst_update_publisher::publisher::{
@@ -150,6 +151,13 @@ async fn main() -> AppResult<()> {
         }
         RunMode::Poll { interval_secs } => {
             run_poll_loop(&config, &po_index, &mut redis_conn, interval_secs).await?;
+        }
+        RunMode::TranslateJson {
+            input,
+            output,
+            concurrency,
+        } => {
+            translate_json_file(&config, &po_index, &input, &output, concurrency).await?;
         }
     }
 

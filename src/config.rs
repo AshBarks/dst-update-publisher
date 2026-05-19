@@ -52,6 +52,11 @@ pub fn load_config() -> Result<AppConfig, AppError> {
 
     let llm_model = std::env::var("LLM_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
 
+    let llm_temperature = std::env::var("LLM_TEMPERATURE")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(0.3);
+
     let po_zip_path = std::env::var("PO_ZIP_PATH")
         .map_err(|_| AppError::Config("PO_ZIP_PATH is required".to_string()))?;
 
@@ -77,6 +82,7 @@ pub fn load_config() -> Result<AppConfig, AppError> {
         llm_api_base,
         llm_api_key,
         llm_model,
+        llm_temperature,
         po_zip_path,
         po_zip_po_files,
     })

@@ -2,3 +2,5 @@
 .env
 references/
 examples/
+
+*.json

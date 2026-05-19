@@ -4,12 +4,14 @@ use std::io::Read;
 use crate::error::{AppError, AppResult};
 use crate::models::{PoSearchResult, PoTranslationEntry};
 
+#[derive(Clone)]
 pub struct PoFileIndex {
     entries: Vec<PoIndexEntry>,
     exact_map: HashMap<String, Vec<usize>>,
     word_index: HashMap<String, Vec<usize>>,
 }
 
+#[derive(Clone)]
 struct PoIndexEntry {
     msgid: String,
     msgid_lower: String,

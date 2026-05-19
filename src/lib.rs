@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod config;
 pub mod error;
+pub mod json_translator;
 pub mod models;
 pub mod po_search;
 pub mod publisher;

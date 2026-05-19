@@ -120,6 +120,7 @@ pub async fn full_translate(
         .create(
             CreateChatCompletionRequestArgs::default()
                 .model(&config.llm_model)
+                .temperature(config.llm_temperature)
                 .messages(messages.clone())
                 .tools(tools.clone())
                 .build()
@@ -189,6 +190,7 @@ pub async fn full_translate(
             .create(
                 CreateChatCompletionRequestArgs::default()
                     .model(&config.llm_model)
+                    .temperature(config.llm_temperature)
                     .messages(messages)
                     .build()
                     .map_err(|e| AppError::LlmApi(format!("failed to build request: {}", e)))?,

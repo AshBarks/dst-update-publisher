@@ -198,8 +198,32 @@ pub struct AppConfig {
     pub llm_api_base: String,
     pub llm_api_key: String,
     pub llm_model: String,
+    pub llm_temperature: f32,
     pub po_zip_path: String,
     pub po_zip_po_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DstUpdateEntry {
+    pub build_number: u64,
+    pub link: String,
+    pub release_date: String,
+    pub is_hotfix: bool,
+    pub status: String,
+    pub is_current: bool,
+    pub row_id: u64,
+    pub release_id: u64,
+    pub title: String,
+    pub content_text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_text_zh: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DstUpdatesFile {
+    pub total: u64,
+    pub fetched_at: String,
+    pub updates: Vec<DstUpdateEntry>,
 }
 
 #[derive(Debug, Clone)]

@@ -18,6 +18,7 @@ pub fn make_config(mock_rss_url: &str, mock_page_url: &str) -> AppConfig {
         llm_api_base: "http://localhost:0".into(),
         llm_api_key: "test-key".into(),
         llm_model: "test-model".into(),
+        llm_temperature: 0.3,
         po_zip_path: String::new(),
         po_zip_po_files: vec![],
     }
@@ -39,6 +40,7 @@ pub fn make_config_with_redis(
         llm_api_base: "http://localhost:0".into(),
         llm_api_key: "test-key".into(),
         llm_model: "test-model".into(),
+        llm_temperature: 0.3,
         po_zip_path: String::new(),
         po_zip_po_files: vec![],
     }
