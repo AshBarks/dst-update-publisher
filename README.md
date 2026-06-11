@@ -24,18 +24,18 @@ cp .env.example .env
 
 ### 配置项说明
 
-| 变量 | 必填 | 说明 | 默认值 |
-|---|---|---|---|
-| `RSS_URL` | 否 | DST 更新 RSS 源地址 | Klei 官方论坛 RSS |
-| `UPDATE_PAGE_URL` | 否 | DST 更新页面地址 | Klei 官方更新页面 |
-| `REDIS_URL` | 否 | Redis 连接地址 | `redis://127.0.0.1:6379` |
-| `REDIS_CHANNEL` | 否 | Redis Pub/Sub 发布通道 | `dst-updates` |
-| `REDIS_DEDUPE_KEY` | 否 | 去重用的 Redis 键名 | `dst:last_build` |
-| `LLM_API_BASE` | 是 | LLM API 基础 URL | - |
-| `LLM_API_KEY` | 是 | LLM API 密钥 | - |
-| `LLM_MODEL` | 否 | 使用的模型名称 | `gpt-4o` |
-| `PO_ZIP_PATH` | 是 | 游戏本地化 ZIP 文件路径 | - |
-| `PO_ZIP_PO_FILES` | 是 | ZIP 中 PO 文件路径（逗号分隔） | - |
+| 变量               | 必填 | 说明                           | 默认值                   |
+| ------------------ | ---- | ------------------------------ | ------------------------ |
+| `RSS_URL`          | 否   | DST 更新 RSS 源地址            | Klei 官方论坛 RSS        |
+| `UPDATE_PAGE_URL`  | 否   | DST 更新页面地址               | Klei 官方更新页面        |
+| `REDIS_URL`        | 否   | Redis 连接地址                 | `redis://127.0.0.1:6379` |
+| `REDIS_CHANNEL`    | 否   | Redis Pub/Sub 发布通道         | `dst-updates`            |
+| `REDIS_DEDUPE_KEY` | 否   | 去重用的 Redis 键名            | `dst:last_build`         |
+| `LLM_API_BASE`     | 是   | LLM API 基础 URL               | -                        |
+| `LLM_API_KEY`      | 是   | LLM API 密钥                   | -                        |
+| `LLM_MODEL`        | 否   | 使用的模型名称                 | `gpt-4o`                 |
+| `PO_ZIP_PATH`      | 是   | 游戏本地化 ZIP 文件路径        | -                        |
+| `PO_ZIP_PO_FILES`  | 是   | ZIP 中 PO 文件路径（逗号分隔） | -                        |
 
 ### PO 文件说明
 
@@ -79,6 +79,30 @@ cargo run --release -- --poll-interval 300
 
 `-i` / `--poll-interval` 参数指定轮询间隔秒数，设置后进入轮询模式；不设置则为单次执行模式。
 
+#### 翻译 JSON 文件（`translate-json` 子命令）
+
+使用 `translate-json` 子命令可以对包含更新条目的 JSON 文件内的 `content_text` 字段进行批量翻译，输出为新的 JSON 文件。常用于只需要将已有 JSON 内容翻译而不走 RSS 抓取/推送完整流程的场景。
+
+示例用法：
+
+```bash
+# 指定输入文件，自动生成输出文件（默认并发 4）
+cargo run --release -- translate-json --input updates.json
+
+# 指定输出文件与并发数
+cargo run --release -- translate-json --input updates.json --output updates_translated.json --concurrency 8
+
+# 使用短选项（注意：子命令的短选项在子命令范围内生效）
+cargo run --release -- translate-json -i updates.json -o updates_translated.json -c 8
+```
+
+行为说明：
+- `--input` / `-i`：要翻译的输入 JSON 文件路径（必填）。
+- `--output` / `-o`：翻译结果输出 JSON 文件路径；若不指定，默认使用 `*_translated.json` 后缀。
+- `--concurrency` / `-c`：并发翻译最大数，默认 `4`。
+
+该子命令仅执行 JSON 中 `content_text` 字段的翻译并写入输出文件，不会执行 RSS 抓取、Redis 推送或去重逻辑。
+
 ### 日志
 
 通过 `RUST_LOG` 环境变量控制日志级别：
@@ -108,17 +132,17 @@ RUST_LOG=dst_update_publisher=debug cargo run --release
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `build_number` | string | 版本构建号 |
-| `revision` | string | 版本修订号 |
-| `channel` | string | 发布通道：`"release"` 或 `"beta"` |
-| `is_hotfix` | boolean | 是否为热修复 |
-| `original_description` | string | 英文原文（Markdown 格式） |
-| `translated_description` | string | 中文译文（Markdown 格式） |
-| `glossary` | object | 术语表，key 为英文原文，value 为官方中文译名 |
-| `pub_date` | string | 发布时间（RFC 3339 格式） |
-| `link` | string | 更新公告链接 |
+| 字段                     | 类型    | 说明                                         |
+| ------------------------ | ------- | -------------------------------------------- |
+| `build_number`           | string  | 版本构建号                                   |
+| `revision`               | string  | 版本修订号                                   |
+| `channel`                | string  | 发布通道：`"release"` 或 `"beta"`            |
+| `is_hotfix`              | boolean | 是否为热修复                                 |
+| `original_description`   | string  | 英文原文（Markdown 格式）                    |
+| `translated_description` | string  | 中文译文（Markdown 格式）                    |
+| `glossary`               | object  | 术语表，key 为英文原文，value 为官方中文译名 |
+| `pub_date`               | string  | 发布时间（RFC 3339 格式）                    |
+| `link`                   | string  | 更新公告链接                                 |
 
 ## 工作流程
 
