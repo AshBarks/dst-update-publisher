@@ -184,27 +184,56 @@ pub async fn full_translate(
             search_results_collected.len()
         );
 
-        let second_response = client
-            .chat()
-            .create(
-                CreateChatCompletionRequestArgs::default()
-                    .model(&config.llm_model)
-                    .temperature(config.llm_temperature)
-                    .messages(messages)
-                    .build()
-                    .map_err(|e| AppError::LlmApi(format!("failed to build request: {}", e)))?,
-            )
-            .await
-            .map_err(|e| AppError::LlmApi(format!("LLM API call failed: {}", e)))?;
+        // 长文本下模型可能返回空内容（HTTP 200 但 content 为空），这里最多重试 3 次
+        let mut translated_text = String::new();
+        let mut finish_note = String::new();
 
-        let second_choice = second_response
-            .choices
-            .first()
-            .ok_or(AppError::LlmResponseParse(
-                "no choices in final response".to_string(),
-            ))?;
+        for attempt in 1..=3 {
+            let second_response = client
+                .chat()
+                .create(
+                    CreateChatCompletionRequestArgs::default()
+                        .model(&config.llm_model)
+                        .temperature(config.llm_temperature)
+                        .messages(messages.clone())
+                        .build()
+                        .map_err(|e| AppError::LlmApi(format!("failed to build request: {}", e)))?,
+                )
+                .await
+                .map_err(|e| AppError::LlmApi(format!("LLM API call failed: {}", e)))?;
 
-        let translated_text = second_choice.message.content.clone().unwrap_or_default();
+            let second_choice =
+                second_response
+                    .choices
+                    .first()
+                    .ok_or(AppError::LlmResponseParse(
+                        "no choices in final response".to_string(),
+                    ))?;
+
+            translated_text = second_choice.message.content.clone().unwrap_or_default();
+            finish_note = second_choice
+                .finish_reason
+                .as_ref()
+                .map(|r| format!("{:?}", r))
+                .unwrap_or_else(|| "unknown".to_string());
+
+            if !translated_text.trim().is_empty() {
+                break;
+            }
+
+            tracing::warn!(
+                "attempt {}/3: LLM returned empty translation (finish_reason={})",
+                attempt,
+                finish_note
+            );
+        }
+
+        if translated_text.trim().is_empty() {
+            return Err(AppError::LlmResponseParse(format!(
+                "LLM returned empty translation after 3 attempts (finish_reason={})",
+                finish_note
+            )));
+        }
 
         // 调试观察：打印术语检索候选集（即发布消息中 glossary 字段的内容）
         if !search_results_collected.is_empty() {
@@ -220,9 +249,14 @@ pub async fn full_translate(
             search_results: search_results_collected,
         })
     } else {
-        let translated_text = first_message.content.clone().unwrap_or_default();
-
         tracing::info!("LLM responded without tool calls, using direct response as translation");
+
+        let translated_text = first_message.content.clone().unwrap_or_default();
+        if translated_text.trim().is_empty() {
+            return Err(AppError::LlmResponseParse(
+                "LLM responded without tool calls and with empty content".to_string(),
+            ));
+        }
 
         Ok(TranslatedAnnouncement {
             original_text: announcement.to_string(),

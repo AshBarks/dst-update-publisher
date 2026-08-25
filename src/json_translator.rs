@@ -179,8 +179,31 @@ pub async fn translate_json_file(
                     content_text.len()
                 );
 
-                match full_translate(&llm_client, config, &content_text, &po_index).await {
-                    Ok(translated) => {
+                // 外层重试：单条翻译失败（含空响应等偶发错误）时最多尝试 3 次
+                const MAX_TRANSLATE_ATTEMPTS: usize = 3;
+                let mut translated = None;
+                for attempt in 1..=MAX_TRANSLATE_ATTEMPTS {
+                    match full_translate(&llm_client, config, &content_text, &po_index).await {
+                        Ok(t) => {
+                            translated = Some(t);
+                            break;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "[{}/{}] build={} translation attempt {}/{} failed: {}",
+                                idx + 1,
+                                total,
+                                build_number,
+                                attempt,
+                                MAX_TRANSLATE_ATTEMPTS,
+                                e
+                            );
+                        }
+                    }
+                }
+
+                match translated {
+                    Some(translated) => {
                         let mut guard = shared.lock().await;
                         guard.updates[idx].content_text_zh = Some(translated.translated_text);
 
@@ -201,13 +224,13 @@ pub async fn translate_json_file(
                             );
                         }
                     }
-                    Err(e) => {
+                    None => {
                         tracing::error!(
-                            "[{}/{}] build={} translation failed: {}",
+                            "[{}/{}] build={} translation failed after {} attempts",
                             idx + 1,
                             total,
                             build_number,
-                            e
+                            MAX_TRANSLATE_ATTEMPTS
                         );
                     }
                 }
