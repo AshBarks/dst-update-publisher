@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -15,7 +16,17 @@ fn write_updates_to_file(updates_file: &DstUpdatesFile, output: &str) -> AppResu
         std::fs::create_dir_all(parent)?;
     }
     let json_output = serde_json::to_string_pretty(updates_file)?;
-    std::fs::write(output_path, json_output)?;
+
+    // 先写入临时文件并刷盘，再原子替换目标文件。
+    // 直接写目标文件时若进程中途被杀，文件会截断损坏，
+    // 导致重启时 merge_with_progress 解析失败、丢失全部翻译进度
+    let tmp_path = output_path.with_extension("json.tmp");
+    {
+        let mut tmp = std::fs::File::create(&tmp_path)?;
+        tmp.write_all(json_output.as_bytes())?;
+        tmp.sync_all()?;
+    }
+    std::fs::rename(&tmp_path, output_path)?;
     Ok(())
 }
 
@@ -225,4 +236,59 @@ pub async fn translate_json_file(
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::DstUpdateEntry;
+
+    fn make_updates_file(build_number: u64) -> DstUpdatesFile {
+        DstUpdatesFile {
+            total: 1,
+            fetched_at: "2025-01-01T00:00:00Z".into(),
+            updates: vec![DstUpdateEntry {
+                build_number,
+                link: "https://example.com".into(),
+                release_date: "2025-01-01".into(),
+                is_hotfix: false,
+                status: "release".into(),
+                is_current: true,
+                row_id: 1,
+                release_id: 1,
+                title: "test".into(),
+                content_text: "hello".into(),
+                content_text_zh: Some("你好".into()),
+            }],
+        }
+    }
+
+    #[test]
+    fn write_is_atomic_and_leaves_no_tmp_file() {
+        let dir =
+            std::env::temp_dir().join(format!("dst_translator_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let output = dir.join("out.json");
+        let output_str = output.to_str().unwrap();
+
+        write_updates_to_file(&make_updates_file(42), output_str).unwrap();
+
+        // 目标文件内容正确
+        let content = std::fs::read_to_string(&output).unwrap();
+        let parsed: DstUpdatesFile = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed.updates[0].build_number, 42);
+        assert_eq!(parsed.updates[0].content_text_zh.as_deref(), Some("你好"));
+
+        // 不残留临时文件
+        let tmp = output.with_extension("json.tmp");
+        assert!(!tmp.exists(), "tmp file should be renamed away");
+
+        // 覆盖写入同样正常（模拟逐条进度落盘）
+        write_updates_to_file(&make_updates_file(43), output_str).unwrap();
+        let reparsed: DstUpdatesFile =
+            serde_json::from_str(&std::fs::read_to_string(&output).unwrap()).unwrap();
+        assert_eq!(reparsed.updates[0].build_number, 43);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
