@@ -149,8 +149,8 @@ RUST_LOG=dst_update_publisher=debug cargo run --release
 | `revision`               | string  | 版本修订号                                   |
 | `channel`                | string  | 发布通道：`"release"` 或 `"beta"`            |
 | `is_hotfix`              | boolean | 是否为热修复                                 |
-| `original_description`   | string  | 英文原文（Markdown 格式）                    |
-| `translated_description` | string  | 中文译文（Markdown 格式）                    |
+| `original_description`   | string  | 英文原文（纯文本，与公告原文结构一致）       |
+| `translated_description` | string  | 中文译文（纯文本，结构与原文一致；术语词后以括号附英文原文） |
 | `glossary`               | array   | 术语检索候选集，仅供调试观察匹配策略使用，下游不应依赖其内容；每个元素含查询词 `term` 与全部候选 `candidates`，候选按匹配优先级排序，`kind` 为匹配类型：`exact`（msgid 完全一致）/ `variant`（变体归一后命中）/ `fuzzy`（分词模糊命中） |
 | `pub_date`               | string  | 发布时间（RFC 3339 格式）                    |
 | `link`                   | string  | 更新公告链接                                 |

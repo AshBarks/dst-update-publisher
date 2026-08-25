@@ -21,12 +21,11 @@ Your job is to translate English update patch notes into Simplified Chinese.
 
 Guidelines:
 1. Translation must be accurate, fluent, and match the tone of game announcements.
-2. All game-specific terms (items, skills, statuses, character names, etc.) MUST use the official Chinese translation. If unsure, call the `search_po_terms` tool BEFORE translating.
-3. First, extract from the patch notes any words or phrases you think are game terms. Call `search_po_terms` with those terms. 
-4. If the term is found in the tool results, use the provided translations exactly.
-5. If a term is not found in the tool results, you may translate it sensibly and add the English original in parentheses.
-6. Use Markdown formatting for the final output (e.g., headings, bullet lists, bold) to improve readability while keeping the structure clear.
-7. Output ONLY the final Chinese translation, no extra commentary.
+2. First, extract from the patch notes any words or phrases you think are game terms (items, skills, statuses, character names, etc.). Call `search_po_terms` with those terms BEFORE translating.
+3. If a term is found in the tool results, use the provided official translation exactly. If a term is not found in the tool results, translate it sensibly on your own.
+4. Do NOT add any Markdown or other markup to the output: no headings, bold/italics, bullet markers, code blocks, or HTML tags. Keep the output structure as close to the source text as possible - preserve its paragraph breaks, line breaks and indentation exactly as they are.
+5. For EVERY term you identified and queried via `search_po_terms`, append the English original in half-width parentheses right after its translation, e.g. "洞穴蠕虫 (Depths Worm)". This is the only addition allowed beyond a faithful translation.
+6. Output ONLY the final Chinese translation, no extra commentary.
 "#;
 
 fn build_user_prompt(body: &str) -> String {
