@@ -207,6 +207,14 @@ pub async fn full_translate(
 
         let translated_text = second_choice.message.content.clone().unwrap_or_default();
 
+        // 调试观察：打印术语检索候选集（即发布消息中 glossary 字段的内容）
+        if !search_results_collected.is_empty() {
+            match serde_json::to_string_pretty(&search_results_collected) {
+                Ok(pretty) => tracing::debug!("glossary preview:\n{}", pretty),
+                Err(e) => tracing::debug!("failed to serialize glossary preview: {}", e),
+            }
+        }
+
         Ok(TranslatedAnnouncement {
             original_text: announcement.to_string(),
             translated_text,
