@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 use crate::error::AppError;
 
@@ -109,25 +109,29 @@ impl UpdatePageData {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// 候选译文与查询词的匹配方式，可信度从高到低：exact > variant > fuzzy
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MatchKind {
+    /// 查询词（小写化后）与 PO 条目 msgid 完全一致
+    Exact,
+    /// 查询词经单复数/时态等变体归一后命中
+    Variant,
+    /// 按分词在词索引中模糊命中
+    Fuzzy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoTranslationEntry {
     pub original: String,
     pub translation: String,
+    pub kind: MatchKind,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoSearchResult {
     pub term: String,
     pub candidates: Vec<PoTranslationEntry>,
-}
-
-impl PoSearchResult {
-    pub fn best_match(&self) -> Option<&PoTranslationEntry> {
-        self.candidates
-            .iter()
-            .find(|c| c.original == self.term)
-            .or_else(|| self.candidates.first())
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -145,7 +149,8 @@ pub struct UpdateNotification {
     pub is_hotfix: bool,
     pub original_description: String,
     pub translated_description: String,
-    pub glossary: HashMap<String, String>,
+    /// 术语检索的完整候选集（含匹配类型），仅用于调试观察匹配策略，下游不应依赖其内容
+    pub glossary: Vec<PoSearchResult>,
     pub pub_date: String,
     pub link: String,
 }
@@ -156,13 +161,14 @@ impl UpdateNotification {
         page_entry: &UpdatePageEntry,
         translated: &TranslatedAnnouncement,
     ) -> Self {
-        let glossary: HashMap<String, String> = translated
+        // 同一术语可能在多次工具调用中重复出现，按小写去重并保留首次出现的顺序，
+        // 保证 glossary 的内容与顺序是确定的
+        let mut seen_terms = HashSet::new();
+        let glossary: Vec<PoSearchResult> = translated
             .search_results
             .iter()
-            .filter_map(|r| {
-                r.best_match()
-                    .map(|b| (r.term.clone(), b.translation.clone()))
-            })
+            .filter(|r| seen_terms.insert(r.term.to_lowercase()))
+            .cloned()
             .collect();
 
         let channel = match page_entry.channel {
@@ -311,48 +317,6 @@ mod tests {
     }
 
     #[test]
-    fn best_match_exact() {
-        let result = PoSearchResult {
-            term: "Varg".into(),
-            candidates: vec![
-                PoTranslationEntry {
-                    original: "Varg".into(),
-                    translation: "座狼".into(),
-                },
-                PoTranslationEntry {
-                    original: "Vargling".into(),
-                    translation: "座狼崽".into(),
-                },
-            ],
-        };
-        let best = result.best_match().unwrap();
-        assert_eq!(best.original, "Varg");
-        assert_eq!(best.translation, "座狼");
-    }
-
-    #[test]
-    fn best_match_no_exact_returns_first() {
-        let result = PoSearchResult {
-            term: "Vargs".into(),
-            candidates: vec![PoTranslationEntry {
-                original: "Varg".into(),
-                translation: "座狼".into(),
-            }],
-        };
-        let best = result.best_match().unwrap();
-        assert_eq!(best.original, "Varg");
-    }
-
-    #[test]
-    fn best_match_empty_candidates() {
-        let result = PoSearchResult {
-            term: "Varg".into(),
-            candidates: vec![],
-        };
-        assert!(result.best_match().is_none());
-    }
-
-    #[test]
     fn compose_notification_fields() {
         let rss_item = RssUpdateItem {
             build_number: "724783".into(),
@@ -376,10 +340,18 @@ mod tests {
             translated_text: "翻译".into(),
             search_results: vec![PoSearchResult {
                 term: "Varg".into(),
-                candidates: vec![PoTranslationEntry {
-                    original: "Varg".into(),
-                    translation: "座狼".into(),
-                }],
+                candidates: vec![
+                    PoTranslationEntry {
+                        original: "Varg".into(),
+                        translation: "座狼".into(),
+                        kind: MatchKind::Exact,
+                    },
+                    PoTranslationEntry {
+                        original: "Vargling".into(),
+                        translation: "座狼崽".into(),
+                        kind: MatchKind::Fuzzy,
+                    },
+                ],
             }],
         };
 
@@ -391,9 +363,67 @@ mod tests {
         assert!(!notification.is_hotfix);
         assert_eq!(notification.original_description, "original");
         assert_eq!(notification.translated_description, "翻译");
-        assert_eq!(notification.glossary.get("Varg").unwrap(), "座狼");
+
+        // glossary 应保留全部候选及其匹配类型，而不是只保留一个“最佳匹配”
+        assert_eq!(notification.glossary.len(), 1);
+        let entry = &notification.glossary[0];
+        assert_eq!(entry.term, "Varg");
+        assert_eq!(entry.candidates.len(), 2);
+        assert_eq!(entry.candidates[0].translation, "座狼");
+        assert_eq!(entry.candidates[0].kind, MatchKind::Exact);
+        assert_eq!(entry.candidates[1].original, "Vargling");
+        assert_eq!(entry.candidates[1].kind, MatchKind::Fuzzy);
+
         assert!(notification.pub_date.contains("2025"));
         assert!(notification.link.contains("724783"));
+    }
+
+    #[test]
+    fn compose_glossary_dedupes_terms_case_insensitively() {
+        let rss_item = RssUpdateItem {
+            build_number: "724783".into(),
+            link: "https://forums.kleientertainment.com/game-updates/dst/724783-r2722/".into(),
+            description_html: String::new(),
+            pub_date: Utc::now(),
+            revision: "2722".into(),
+        };
+
+        let page_entry = UpdatePageEntry {
+            revision: "2722".into(),
+            build_number: "724783".into(),
+            channel: ReleaseChannel::Release,
+            is_hotfix: false,
+        };
+
+        let make_result = |term: &str| PoSearchResult {
+            term: term.into(),
+            candidates: vec![PoTranslationEntry {
+                original: "Varg".into(),
+                translation: "座狼".into(),
+                kind: MatchKind::Exact,
+            }],
+        };
+
+        // 多次工具调用可能重复查询同一术语（大小写不同），应去重并保留首次出现
+        let translated = TranslatedAnnouncement {
+            original_text: String::new(),
+            translated_text: String::new(),
+            search_results: vec![
+                make_result("Hound"),
+                make_result("Varg"),
+                make_result("hound"),
+                make_result("varg"),
+            ],
+        };
+
+        let notification = UpdateNotification::compose(&rss_item, &page_entry, &translated);
+
+        let terms: Vec<&str> = notification
+            .glossary
+            .iter()
+            .map(|r| r.term.as_str())
+            .collect();
+        assert_eq!(terms, vec!["Hound", "Varg"]);
     }
 
     #[test]

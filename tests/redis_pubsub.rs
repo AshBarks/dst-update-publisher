@@ -1,7 +1,9 @@
 mod common;
 
 use common::{connect_test_redis, unique_key};
-use dst_update_publisher::models::UpdateNotification;
+use dst_update_publisher::models::{
+    MatchKind, PoSearchResult, PoTranslationEntry, UpdateNotification,
+};
 use dst_update_publisher::publisher::publish_update;
 
 #[tokio::test]
@@ -31,7 +33,14 @@ async fn redis_pubsub_publish_and_receive() {
         is_hotfix: false,
         original_description: "original text".into(),
         translated_description: "翻译文本".into(),
-        glossary: std::collections::HashMap::from([("Varg".into(), "座狼".into())]),
+        glossary: vec![PoSearchResult {
+            term: "Varg".into(),
+            candidates: vec![PoTranslationEntry {
+                original: "Varg".into(),
+                translation: "座狼".into(),
+                kind: MatchKind::Exact,
+            }],
+        }],
         pub_date: "2025-04-28T12:00:00Z".into(),
         link: "https://example.com/update".into(),
     };
@@ -55,5 +64,12 @@ async fn redis_pubsub_publish_and_receive() {
     assert_eq!(parsed["build_number"], "724783");
     assert_eq!(parsed["channel"], "release");
     assert_eq!(parsed["is_hotfix"], false);
-    assert_eq!(parsed["glossary"]["Varg"], "座狼");
+    // glossary 是数组结构：term + 全部候选（含匹配类型）
+    assert_eq!(parsed["glossary"][0]["term"], "Varg");
+    assert_eq!(parsed["glossary"][0]["candidates"][0]["original"], "Varg");
+    assert_eq!(
+        parsed["glossary"][0]["candidates"][0]["translation"],
+        "座狼"
+    );
+    assert_eq!(parsed["glossary"][0]["candidates"][0]["kind"], "exact");
 }

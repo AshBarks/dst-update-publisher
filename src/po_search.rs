@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Read;
 
 use crate::error::{AppError, AppResult};
-use crate::models::{PoSearchResult, PoTranslationEntry};
+use crate::models::{MatchKind, PoSearchResult, PoTranslationEntry};
 
 #[derive(Clone)]
 pub struct PoFileIndex {
@@ -246,7 +246,9 @@ impl PoFileIndex {
     fn search_single_term(&self, term: &str) -> PoSearchResult {
         let term_lower = term.to_lowercase();
         let mut seen = HashSet::new();
-        let mut candidates: Vec<(usize, PoTranslationEntry)> = Vec::new();
+        // 内部评分仅用于排序：exact=usize::MAX，variant=100，fuzzy=命中词数；
+        // 对外只暴露 MatchKind，避免把哨兵值泄漏到消息里
+        let mut candidates: Vec<(usize, MatchKind, PoTranslationEntry)> = Vec::new();
 
         if let Some(indices) = self.exact_map.get(&term_lower) {
             for &idx in indices {
@@ -254,9 +256,11 @@ impl PoFileIndex {
                     let entry = &self.entries[idx];
                     candidates.push((
                         usize::MAX,
+                        MatchKind::Exact,
                         PoTranslationEntry {
                             original: entry.msgid.clone(),
                             translation: entry.msgstr.clone(),
+                            kind: MatchKind::Exact,
                         },
                     ));
                 }
@@ -274,9 +278,11 @@ impl PoFileIndex {
                             let entry = &self.entries[idx];
                             candidates.push((
                                 100,
+                                MatchKind::Variant,
                                 PoTranslationEntry {
                                     original: entry.msgid.clone(),
                                     translation: entry.msgstr.clone(),
+                                    kind: MatchKind::Variant,
                                 },
                             ));
                         }
@@ -313,9 +319,11 @@ impl PoFileIndex {
                     if score > 0 {
                         candidates.push((
                             score,
+                            MatchKind::Fuzzy,
                             PoTranslationEntry {
                                 original: entry.msgid.clone(),
                                 translation: entry.msgstr.clone(),
+                                kind: MatchKind::Fuzzy,
                             },
                         ));
                     }
@@ -326,13 +334,13 @@ impl PoFileIndex {
         candidates.sort_by_key(|b| std::cmp::Reverse(b.0));
 
         let mut dedup = HashSet::new();
-        candidates.retain(|(_, e)| dedup.insert((e.original.clone(), e.translation.clone())));
+        candidates.retain(|(_, _, e)| dedup.insert((e.original.clone(), e.translation.clone())));
 
         candidates.truncate(5);
 
         PoSearchResult {
             term: term.to_string(),
-            candidates: candidates.into_iter().map(|(_, e)| e).collect(),
+            candidates: candidates.into_iter().map(|(_, _, e)| e).collect(),
         }
     }
 }

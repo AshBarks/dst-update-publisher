@@ -16,7 +16,10 @@ pub struct CliArgs {
 
 #[derive(Debug, Clone, Parser)]
 pub enum Commands {
-    #[command(name = "translate-json", about = "翻译 JSON 文件中的 content_text 字段")]
+    #[command(
+        name = "translate-json",
+        about = "翻译 JSON 文件中的 content_text 字段"
+    )]
     TranslateJson {
         #[arg(short, long, help = "输入需要翻译的 JSON 文件路径")]
         input: String,
@@ -30,7 +33,9 @@ pub enum Commands {
 #[derive(Debug, Clone)]
 pub enum RunMode {
     Once,
-    Poll { interval_secs: u64 },
+    Poll {
+        interval_secs: u64,
+    },
     TranslateJson {
         input: String,
         output: String,

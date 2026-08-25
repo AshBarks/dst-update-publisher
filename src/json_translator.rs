@@ -29,7 +29,11 @@ fn merge_with_progress(input: DstUpdatesFile, output: &str) -> DstUpdatesFile {
     let content = match std::fs::read_to_string(output_path) {
         Ok(c) => c,
         Err(e) => {
-            tracing::warn!("failed to read output file {}: {}, starting fresh", output, e);
+            tracing::warn!(
+                "failed to read output file {}: {}, starting fresh",
+                output,
+                e
+            );
             return input;
         }
     };
@@ -37,7 +41,11 @@ fn merge_with_progress(input: DstUpdatesFile, output: &str) -> DstUpdatesFile {
     let prev: DstUpdatesFile = match serde_json::from_str(&content) {
         Ok(f) => f,
         Err(e) => {
-            tracing::warn!("failed to parse output file {}: {}, starting fresh", output, e);
+            tracing::warn!(
+                "failed to parse output file {}: {}, starting fresh",
+                output,
+                e
+            );
             return input;
         }
     };
@@ -200,7 +208,11 @@ pub async fn translate_json_file(
 
     let (success_count, fail_count) = {
         let guard = shared.lock().await;
-        let success_count = guard.updates.iter().filter(|u| u.content_text_zh.is_some()).count() as u64;
+        let success_count = guard
+            .updates
+            .iter()
+            .filter(|u| u.content_text_zh.is_some())
+            .count() as u64;
         let fail_count = total as u64 - success_count;
         (success_count, fail_count)
     };

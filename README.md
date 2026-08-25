@@ -118,15 +118,26 @@ RUST_LOG=dst_update_publisher=debug cargo run --release
 ```json
 {
   "build_number": "615492",
-  "revision": "r378",
+  "revision": "378",
   "channel": "release",
   "is_hotfix": false,
   "original_description": "英文原文...",
   "translated_description": "中文译文...",
-  "glossary": {
-    "Varg": "座狼",
-    "Hound": "猎犬"
-  },
+  "glossary": [
+    {
+      "term": "Varg",
+      "candidates": [
+        { "kind": "exact", "original": "Varg", "translation": "座狼" },
+        { "kind": "fuzzy", "original": "Vargling", "translation": "座狼崽" }
+      ]
+    },
+    {
+      "term": "Hound",
+      "candidates": [
+        { "kind": "exact", "original": "Hound", "translation": "猎犬" }
+      ]
+    }
+  ],
   "pub_date": "2025-04-28T12:00:00+00:00",
   "link": "https://forums.kleientertainment.com/game-updates/dst/update-615492-r378/"
 }
@@ -140,9 +151,13 @@ RUST_LOG=dst_update_publisher=debug cargo run --release
 | `is_hotfix`              | boolean | 是否为热修复                                 |
 | `original_description`   | string  | 英文原文（Markdown 格式）                    |
 | `translated_description` | string  | 中文译文（Markdown 格式）                    |
-| `glossary`               | object  | 术语表，key 为英文原文，value 为官方中文译名 |
+| `glossary`               | array   | 术语检索候选集，仅供调试观察匹配策略使用，下游不应依赖其内容；每个元素含查询词 `term` 与全部候选 `candidates`，候选按匹配优先级排序，`kind` 为匹配类型：`exact`（msgid 完全一致）/ `variant`（变体归一后命中）/ `fuzzy`（分词模糊命中） |
 | `pub_date`               | string  | 发布时间（RFC 3339 格式）                    |
 | `link`                   | string  | 更新公告链接                                 |
+
+说明：
+- 同一查询词只保留首次出现（大小写不敏感去重），`glossary` 元素顺序即 LLM 工具调用的查询顺序；
+- LLM 未调用术语检索工具时，该字段为空数组 `[]`。
 
 ## 工作流程
 

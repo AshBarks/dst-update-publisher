@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use dst_update_publisher::models::{
-    AppConfig, PoSearchResult, PoTranslationEntry, TranslatedAnnouncement,
+    AppConfig, MatchKind, PoSearchResult, PoTranslationEntry, TranslatedAnnouncement,
 };
 use dst_update_publisher::po_search::{PoFileIndex, build_index_from_po_contents};
 use dst_update_publisher::publisher::connect_redis;
@@ -70,6 +70,7 @@ pub fn make_translated_announcement() -> TranslatedAnnouncement {
             candidates: vec![PoTranslationEntry {
                 original: "Chessmaster Circuit".into(),
                 translation: "国际象棋大师电路".into(),
+                kind: MatchKind::Exact,
             }],
         }],
     }
