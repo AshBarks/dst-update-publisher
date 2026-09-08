@@ -131,7 +131,10 @@ async fn run_pipeline(
 
     let notification = UpdateNotification::compose(rss_item, &page_entry, &translated);
 
-    let json = notification.to_json().map_err(AppError::Serialization)?;
+    let json = notification
+        .to_json()
+        .map_err(AppError::Serialization)
+        .map_err(|e| StageError::at("serialize", e))?;
     tracing::info!("notification JSON length: {} chars", json.len());
 
     publish_update(redis_conn, &config.redis_channel, &notification)
