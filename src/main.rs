@@ -1,11 +1,14 @@
 use dst_update_publisher::cli::{CliArgs, RunMode};
 use dst_update_publisher::config::load_config;
 use dst_update_publisher::error::{AppError, AppResult};
+use dst_update_publisher::failure::{handle_failure, FAILURE_STATE_KEY};
 use dst_update_publisher::json_translator::translate_json_file;
-use dst_update_publisher::models::{AppConfig, ProcessOutcome, ReleaseChannel, UpdateNotification};
+use dst_update_publisher::models::{
+    build_canonical, AppConfig, ProcessOutcome, ReleaseChannel, UpdateNotification,
+};
 use dst_update_publisher::po_search::{PoFileIndex, load_po_index};
 use dst_update_publisher::publisher::{
-    connect_redis, is_build_processed, mark_build_processed, publish_update,
+    connect_redis, is_build_processed, mark_build_processed, publish_canonical, publish_update,
 };
 use dst_update_publisher::rss::{fetch_rss_updates, get_latest_pc_update};
 use dst_update_publisher::translator::{create_llm_client, full_translate};
@@ -14,14 +17,43 @@ use dst_update_publisher::update_page::{fetch_update_page, get_version_info};
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-async fn process_once(
+/// 记录失败发生的链上阶段，供失败状态机在告警正文中定位（implementation/02 Step 4）。
+#[derive(Debug)]
+struct StageError {
+    stage: &'static str,
+    source: AppError,
+}
+
+impl StageError {
+    fn at(stage: &'static str, source: AppError) -> Self {
+        Self { stage, source }
+    }
+}
+
+impl std::fmt::Display for StageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "stage '{}': {}", self.stage, self.source)
+    }
+}
+
+impl std::error::Error for StageError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// 单轮 抓取→去重→版本页→html2text→翻译→canonical 构造→双发→标记。任何阶段失败
+/// 以 StageError 返回（由 process_once 转失败状态机），不向上传播（进程不崩）。
+async fn run_pipeline(
     config: &AppConfig,
     po_index: &PoFileIndex,
     redis_conn: &mut redis::aio::MultiplexedConnection,
-) -> AppResult<ProcessOutcome> {
+) -> Result<ProcessOutcome, StageError> {
     tracing::info!("starting single run processing");
 
-    let rss_items = fetch_rss_updates(config).await?;
+    let rss_items = fetch_rss_updates(config)
+        .await
+        .map_err(|e| StageError::at("fetch_rss", e))?;
     let latest = get_latest_pc_update(&rss_items);
 
     let rss_item = match latest {
@@ -39,7 +71,10 @@ async fn process_once(
         rss_item.pub_date
     );
 
-    if is_build_processed(redis_conn, &config.redis_dedupe_key, &rss_item.build_number).await? {
+    if is_build_processed(redis_conn, &config.redis_dedupe_key, &rss_item.build_number)
+        .await
+        .map_err(|e| StageError::at("dedup_check", e))?
+    {
         tracing::info!(
             "build {} already processed, skipping",
             rss_item.build_number
@@ -49,8 +84,11 @@ async fn process_once(
         });
     }
 
-    let page_data = fetch_update_page(config).await?;
-    let page_entry = get_version_info(&page_data, &rss_item.revision, &rss_item.build_number)?;
+    let page_data = fetch_update_page(config)
+        .await
+        .map_err(|e| StageError::at("fetch_update_page", e))?;
+    let page_entry = get_version_info(&page_data, &rss_item.revision, &rss_item.build_number)
+        .map_err(|e| StageError::at("parse_update_page", e))?;
 
     tracing::info!(
         "version info: revision={}, channel={}, hotfix={}",
@@ -63,7 +101,12 @@ async fn process_once(
     );
 
     let announcement_text = html2text::from_read(rss_item.description_html.as_bytes(), 80)
-        .map_err(|e| AppError::HtmlParse(format!("failed to convert HTML to text: {}", e)))?;
+        .map_err(|e| {
+            StageError::at(
+                "html2text",
+                AppError::HtmlParse(format!("failed to convert HTML to text: {}", e)),
+            )
+        })?;
 
     tracing::info!(
         "announcement text length: {} chars",
@@ -72,7 +115,9 @@ async fn process_once(
 
     let llm_client = create_llm_client(config);
 
-    let translated = full_translate(&llm_client, config, &announcement_text, po_index).await?;
+    let translated = full_translate(&llm_client, config, &announcement_text, po_index)
+        .await
+        .map_err(|e| StageError::at("translate", e))?;
 
     tracing::info!(translated = translated.translated_text, translated.search_results = ?translated.search_results);
 
@@ -81,18 +126,56 @@ async fn process_once(
         translated.translated_text.len()
     );
 
+    let canonical = build_canonical(rss_item, &page_entry, &announcement_text, &translated)
+        .map_err(|e| StageError::at("build_canonical", e))?;
+
     let notification = UpdateNotification::compose(rss_item, &page_entry, &translated);
 
     let json = notification.to_json().map_err(AppError::Serialization)?;
     tracing::info!("notification JSON length: {} chars", json.len());
 
-    publish_update(redis_conn, &config.redis_channel, &notification).await?;
+    publish_update(redis_conn, &config.redis_channel, &notification)
+        .await
+        .map_err(|e| StageError::at("publish_update", e))?;
 
-    mark_build_processed(redis_conn, &config.redis_dedupe_key, &rss_item.build_number).await?;
+    // 旧格式可能已发出一次；canonical 发布失败则不标记去重（下轮整链重试），
+    // 与"翻译失败不标 dedup"语义一致；下游按内容幂等，重复可接受。
+    publish_canonical(redis_conn, &config.redis_canonical_channel, &canonical)
+        .await
+        .map_err(|e| StageError::at("publish_canonical", e))?;
+
+    mark_build_processed(redis_conn, &config.redis_dedupe_key, &rss_item.build_number)
+        .await
+        .map_err(|e| StageError::at("mark_processed", e))?;
+
+    // 成功发布即隐式恢复（DESIGN A5：无恢复消息）。
+    if let Err(e) = redis::cmd("DEL")
+        .arg(FAILURE_STATE_KEY)
+        .exec_async(redis_conn)
+        .await
+    {
+        tracing::warn!("failed to clear failure state after successful publish: {}", e);
+    }
 
     Ok(ProcessOutcome::Published {
         build_number: notification.build_number,
     })
+}
+
+async fn process_once(
+    config: &AppConfig,
+    po_index: &PoFileIndex,
+    redis_conn: &mut redis::aio::MultiplexedConnection,
+) -> AppResult<ProcessOutcome> {
+    match run_pipeline(config, po_index, redis_conn).await {
+        Ok(outcome) => Ok(outcome),
+        Err(stage_err) => {
+            handle_failure(stage_err.stage, &stage_err.source, redis_conn, config).await;
+            Ok(ProcessOutcome::Failed {
+                reason: stage_err.to_string(),
+            })
+        }
+    }
 }
 
 async fn run_poll_loop(
