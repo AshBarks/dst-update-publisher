@@ -1,5 +1,14 @@
+use canonical_msg::prost::Message;
+use canonical_msg::CanonicalMessage;
+
 use crate::error::{AppError, AppResult};
 use crate::models::{AppConfig, UpdateNotification};
+
+/// canonical 去重键前缀（A13：结构由 A 自定、下游不解析），Phase 4 起成为唯一真相。
+/// 与 `models::KLEI_DST_SOURCE_ID` 保持同构：`dedup:{source_id}:{build_number}`。
+pub fn canonical_dedup_key(build_number: &str) -> String {
+    format!("dedup:klei-dst-rss:{build_number}")
+}
 
 pub async fn connect_redis(config: &AppConfig) -> AppResult<redis::aio::MultiplexedConnection> {
     let client = redis::Client::open(config.redis_url.as_str()).map_err(AppError::Redis)?;
@@ -36,6 +45,10 @@ pub async fn mark_build_processed(
     dedupe_key: &str,
     build_number: &str,
 ) -> AppResult<()> {
+    // 判定逻辑不变：is_build_processed 仍只读旧键。新键仅冗余记录，自本批开始积累，
+    // Phase 4 dst-qq-push 退役时成为唯一真相（DESIGN §5.2）。
+    let canonical_key = canonical_dedup_key(build_number);
+
     redis::cmd("SET")
         .arg(dedupe_key)
         .arg(build_number)
@@ -43,10 +56,18 @@ pub async fn mark_build_processed(
         .await
         .map_err(AppError::Redis)?;
 
+    redis::cmd("SET")
+        .arg(&canonical_key)
+        .arg(build_number)
+        .exec_async(conn)
+        .await
+        .map_err(AppError::Redis)?;
+
     tracing::info!(
-        "marked build {} as processed in Redis key '{}'",
+        "marked build {} as processed in Redis keys '{}' and '{}'",
         build_number,
-        dedupe_key
+        dedupe_key,
+        canonical_key
     );
 
     Ok(())
@@ -68,6 +89,31 @@ pub async fn publish_update(
 
     tracing::info!(
         "published update notification to Redis channel '{}'",
+        channel
+    );
+
+    Ok(())
+}
+
+/// 发布 canonical 消息（proto 二进制载荷，Redis PUBLISH 支持）。
+pub async fn publish_canonical(
+    conn: &mut redis::aio::MultiplexedConnection,
+    channel: &str,
+    message: &CanonicalMessage,
+) -> AppResult<()> {
+    let bytes = message.encode_to_vec();
+
+    redis::cmd("PUBLISH")
+        .arg(channel)
+        .arg(&bytes)
+        .exec_async(conn)
+        .await
+        .map_err(AppError::Redis)?;
+
+    tracing::info!(
+        "published canonical message kind={} id={} to Redis channel '{}'",
+        message.kind,
+        message.id,
         channel
     );
 
