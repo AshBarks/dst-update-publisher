@@ -1,7 +1,9 @@
 mod common;
 
 use common::{cleanup_key, connect_test_redis, unique_key};
-use dst_update_publisher::publisher::{is_build_processed, mark_build_processed};
+use dst_update_publisher::publisher::{
+    canonical_dedup_key, is_build_processed, mark_build_processed,
+};
 
 #[tokio::test]
 async fn redis_dedup_unprocessed_then_mark_then_processed() {
@@ -24,6 +26,7 @@ async fn redis_dedup_unprocessed_then_mark_then_processed() {
     assert!(is_processed, "should be processed after marking");
 
     cleanup_key(&mut conn, &dedup_key).await;
+    cleanup_key(&mut conn, &canonical_dedup_key(build_number)).await;
 }
 
 #[tokio::test]
@@ -44,4 +47,5 @@ async fn redis_dedup_different_build_not_matched() {
     );
 
     cleanup_key(&mut conn, &dedup_key).await;
+    cleanup_key(&mut conn, &canonical_dedup_key("724783")).await;
 }

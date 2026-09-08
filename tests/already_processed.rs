@@ -1,7 +1,9 @@
 mod common;
 
 use common::{cleanup_key, connect_test_redis, unique_key};
-use dst_update_publisher::publisher::{is_build_processed, mark_build_processed};
+use dst_update_publisher::publisher::{
+    canonical_dedup_key, is_build_processed, mark_build_processed,
+};
 
 #[tokio::test]
 async fn already_processed_skips_pipeline() {
@@ -22,4 +24,5 @@ async fn already_processed_skips_pipeline() {
     );
 
     cleanup_key(&mut conn, &dedup_key).await;
+    cleanup_key(&mut conn, &canonical_dedup_key(build_number)).await;
 }

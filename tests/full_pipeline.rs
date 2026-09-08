@@ -5,7 +5,9 @@ use common::{
     read_fixture, unique_key,
 };
 use dst_update_publisher::models::UpdateNotification;
-use dst_update_publisher::publisher::{is_build_processed, mark_build_processed, publish_update};
+use dst_update_publisher::publisher::{
+    canonical_dedup_key, is_build_processed, mark_build_processed, publish_update,
+};
 use dst_update_publisher::rss::{fetch_rss_updates, get_latest_pc_update};
 use dst_update_publisher::update_page::{fetch_update_page, get_version_info};
 
@@ -79,4 +81,9 @@ async fn full_pipeline_rss_to_redis() {
     assert!(is_processed, "should be processed after full pipeline");
 
     cleanup_key(&mut redis_conn, &redis_dedupe_key).await;
+    cleanup_key(
+        &mut redis_conn,
+        &canonical_dedup_key(&latest.build_number),
+    )
+    .await;
 }
