@@ -41,8 +41,21 @@ pub fn load_config() -> Result<AppConfig, AppError> {
     let redis_channel =
         std::env::var("REDIS_CHANNEL").unwrap_or_else(|_| "dst-updates".to_string());
 
+    let redis_canonical_channel = std::env::var("REDIS_CANONICAL_CHANNEL")
+        .unwrap_or_else(|_| "msgs.in".to_string());
+
     let redis_dedupe_key =
         std::env::var("REDIS_DEDUPE_KEY").unwrap_or_else(|_| "dst:last_build".to_string());
+
+    let failure_escalate_count = std::env::var("FAILURE_ESCALATE_COUNT")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(5);
+
+    let failure_escalate_hours = std::env::var("FAILURE_ESCALATE_HOURS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(24);
 
     let llm_api_base = std::env::var("LLM_API_BASE")
         .map_err(|_| AppError::Config("LLM_API_BASE is required".to_string()))?;
@@ -78,7 +91,10 @@ pub fn load_config() -> Result<AppConfig, AppError> {
         update_page_url,
         redis_url,
         redis_channel,
+        redis_canonical_channel,
         redis_dedupe_key,
+        failure_escalate_count,
+        failure_escalate_hours,
         llm_api_base,
         llm_api_key,
         llm_model,
