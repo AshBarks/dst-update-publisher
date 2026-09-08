@@ -35,6 +35,9 @@ pub enum AppError {
     #[error("Update page entry not found for revision: {0}")]
     RevisionNotFound(String),
 
+    #[error("Translation check failed: {0}")]
+    Translation(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }

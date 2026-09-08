@@ -2,7 +2,12 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-use crate::error::AppError;
+use canonical_msg::{
+    canonical_message, CanonicalMessage, DstUpdate as CanonicalDstUpdate, Link, MsgKind, Source,
+    SourceKind,
+};
+
+use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Clone)]
 pub enum ReleaseChannel {
@@ -194,6 +199,71 @@ impl UpdateNotification {
     }
 }
 
+/// 稳定机器标识："klei-dst-rss"（canonical source.id，与去重键前缀一致）
+pub const KLEI_DST_SOURCE_ID: &str = "klei-dst-rss";
+
+/// canonical 信源描述：更新与失败告警共用同一 source（DESIGN §5.2）
+pub fn klei_source() -> Source {
+    Source {
+        kind: SourceKind::Rss as i32,
+        id: KLEI_DST_SOURCE_ID.to_string(),
+        display_name: "Klei 官方更新公告".to_string(),
+    }
+}
+
+fn canonical_release_channel(channel: &ReleaseChannel) -> canonical_msg::ReleaseChannel {
+    match channel {
+        ReleaseChannel::Release => canonical_msg::ReleaseChannel::Release,
+        ReleaseChannel::Beta => canonical_msg::ReleaseChannel::Beta,
+    }
+}
+
+/// 构造 canonical（push.v1）更新消息。字段映射逐条对应 implementation/02 Step 2 表格。
+/// translated_text 为空视为翻译失败（返回 Err，进失败状态机）——
+/// 防不变量 #1 违规消息上线（body_markdown 是中文译文的主展示正文）。
+pub fn build_canonical(
+    rss_item: &RssUpdateItem,
+    page_entry: &UpdatePageEntry,
+    announcement_text: &str,
+    translated: &TranslatedAnnouncement,
+) -> AppResult<CanonicalMessage> {
+    let body_markdown = translated.translated_text.clone();
+    if body_markdown.trim().is_empty() {
+        return Err(AppError::Translation(
+            "translated_text is empty after trim; refusing to build canonical message".to_string(),
+        ));
+    }
+
+    Ok(CanonicalMessage {
+        id: ulid::Ulid::new().to_string(),
+        source: Some(klei_source()),
+        dedup_key: format!("{KLEI_DST_SOURCE_ID}:{}", rss_item.build_number),
+        kind: MsgKind::Update as i32,
+        title: format!(
+            "饥荒联机版更新 build {} · r{}",
+            rss_item.build_number, rss_item.revision
+        ),
+        body_markdown,
+        body_text: announcement_text.to_string(),
+        links: vec![Link {
+            rel: "original".to_string(),
+            url: rss_item.link.clone(),
+        }],
+        tags: vec![],
+        published_at: Some(canonical_msg::pbjson_types::Timestamp {
+            seconds: rss_item.pub_date.timestamp(),
+            nanos: rss_item.pub_date.timestamp_subsec_nanos() as i32,
+        }),
+        domain: Some(canonical_message::Domain::Dst(CanonicalDstUpdate {
+            build_number: rss_item.build_number.clone(),
+            revision: rss_item.revision.clone(),
+            channel: canonical_release_channel(&page_entry.channel) as i32,
+            is_hotfix: page_entry.is_hotfix,
+            original_description: translated.original_text.clone(),
+        })),
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub rss_url: String,
@@ -240,6 +310,7 @@ pub enum ProcessOutcome {
     Published { build_number: String },
     AlreadyProcessed { build_number: String },
     NoUpdateAvailable,
+    Failed { reason: String },
 }
 
 #[cfg(test)]
@@ -497,5 +568,101 @@ mod tests {
         assert!(found.is_some());
         assert_eq!(found.unwrap().revision, "2722");
         assert!(data.find_by_build_number("999999").is_none());
+    }
+
+    fn canonical_fixtures() -> (RssUpdateItem, UpdatePageEntry, TranslatedAnnouncement) {
+        let rss_item = RssUpdateItem {
+            build_number: "724783".into(),
+            link: "https://forums.kleientertainment.com/game-updates/dst/724783-r2722/".into(),
+            description_html: String::new(),
+            pub_date: DateTime::parse_from_rfc3339("2025-04-28T12:00:00Z")
+                .unwrap()
+                .to_utc(),
+            revision: "2722".into(),
+        };
+
+        let page_entry = UpdatePageEntry {
+            revision: "2722".into(),
+            build_number: "724783".into(),
+            channel: ReleaseChannel::Beta,
+            is_hotfix: true,
+        };
+
+        let translated = TranslatedAnnouncement {
+            original_text: "original english announcement".into(),
+            translated_text: "中文译文，已含术语括号注释（座狼 (Varg)）".into(),
+            search_results: vec![],
+        };
+
+        (rss_item, page_entry, translated)
+    }
+
+    #[test]
+    fn build_canonical_field_mapping() {
+        let (rss_item, page_entry, translated) = canonical_fixtures();
+
+        let msg = build_canonical(&rss_item, &page_entry, "raw cleaned text", &translated)
+            .expect("build_canonical failed");
+
+        assert_eq!(msg.kind, MsgKind::Update as i32);
+        assert!(!msg.id.is_empty(), "id 应为新 ULID");
+        assert!(msg.id.len() == 26, "ULID 应为 26 字符，实际 {}", msg.id);
+
+        let source = msg.source.expect("source missing");
+        assert_eq!(source.kind, SourceKind::Rss as i32);
+        assert_eq!(source.id, "klei-dst-rss");
+        assert_eq!(source.display_name, "Klei 官方更新公告");
+
+        assert_eq!(msg.dedup_key, "klei-dst-rss:724783");
+        assert_eq!(msg.title, "饥荒联机版更新 build 724783 · r2722");
+        assert_eq!(msg.body_markdown, "中文译文，已含术语括号注释（座狼 (Varg)）");
+        assert_eq!(msg.body_text, "raw cleaned text");
+
+        assert_eq!(msg.links.len(), 1);
+        assert_eq!(msg.links[0].rel, "original");
+        assert_eq!(
+            msg.links[0].url,
+            "https://forums.kleientertainment.com/game-updates/dst/724783-r2722/"
+        );
+        assert!(msg.tags.is_empty());
+
+        let ts = msg.published_at.expect("published_at missing");
+        assert_eq!(ts.seconds, rss_item.pub_date.timestamp());
+        assert_eq!(ts.nanos, rss_item.pub_date.timestamp_subsec_nanos() as i32);
+
+        match msg.domain {
+            Some(canonical_message::Domain::Dst(dst)) => {
+                assert_eq!(dst.build_number, "724783");
+                assert_eq!(dst.revision, "2722");
+                assert_eq!(dst.channel, canonical_msg::ReleaseChannel::Beta as i32);
+                assert!(dst.is_hotfix);
+                assert_eq!(dst.original_description, "original english announcement");
+            }
+            Some(canonical_message::Domain::Chat(_)) => panic!("domain 应为 Dst，实际 Chat"),
+            None => panic!("domain 应为 Dst，实际 None"),
+        }
+    }
+
+    #[test]
+    fn build_canonical_encode_roundtrip() {
+        use canonical_msg::prost::Message;
+
+        let (rss_item, page_entry, translated) = canonical_fixtures();
+        let msg = build_canonical(&rss_item, &page_entry, "raw text", &translated)
+            .expect("build_canonical failed");
+
+        let bytes = msg.encode_to_vec();
+        let decoded = CanonicalMessage::decode(bytes.as_slice()).expect("decode failed");
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn build_canonical_rejects_empty_translation() {
+        let (rss_item, page_entry, translated) = canonical_fixtures();
+        let mut empty = translated;
+        empty.translated_text = "   \n  ".into();
+
+        let result = build_canonical(&rss_item, &page_entry, "raw text", &empty);
+        assert!(result.is_err());
     }
 }

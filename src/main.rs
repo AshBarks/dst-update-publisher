@@ -112,6 +112,9 @@ async fn run_poll_loop(
             Ok(ProcessOutcome::NoUpdateAvailable) => {
                 tracing::info!("no PC update found, will check later")
             }
+            Ok(ProcessOutcome::Failed { reason }) => {
+                tracing::error!("processing failed: {}", reason)
+            }
             Err(e) => tracing::error!("processing failed: {}", e),
         }
         tracing::info!("sleeping for {} seconds before next check", interval_secs);
@@ -146,6 +149,9 @@ async fn main() -> AppResult<()> {
                 }
                 ProcessOutcome::NoUpdateAvailable => {
                     tracing::info!("no PC update found, nothing to do")
+                }
+                ProcessOutcome::Failed { reason } => {
+                    tracing::error!("processing failed: {}", reason)
                 }
             }
         }
