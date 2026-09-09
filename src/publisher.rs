@@ -2,7 +2,7 @@ use canonical_msg::prost::Message;
 use canonical_msg::CanonicalMessage;
 
 use crate::error::{AppError, AppResult};
-use crate::models::{AppConfig, UpdateNotification};
+use crate::models::AppConfig;
 
 /// canonical 去重键前缀（A13：结构由 A 自定、下游不解析），Phase 4 起成为唯一真相。
 /// 与 `models::KLEI_DST_SOURCE_ID` 保持同构：`dedup:{source_id}:{build_number}`。
@@ -68,28 +68,6 @@ pub async fn mark_build_processed(
         build_number,
         dedupe_key,
         canonical_key
-    );
-
-    Ok(())
-}
-
-pub async fn publish_update(
-    conn: &mut redis::aio::MultiplexedConnection,
-    channel: &str,
-    notification: &UpdateNotification,
-) -> AppResult<()> {
-    let json = notification.to_json().map_err(AppError::Serialization)?;
-
-    redis::cmd("PUBLISH")
-        .arg(channel)
-        .arg(&json)
-        .exec_async(conn)
-        .await
-        .map_err(AppError::Redis)?;
-
-    tracing::info!(
-        "published update notification to Redis channel '{}'",
-        channel
     );
 
     Ok(())

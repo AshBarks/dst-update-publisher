@@ -4,15 +4,16 @@ use common::{
     cleanup_key, connect_test_redis, make_config_with_redis, make_translated_announcement,
     read_fixture, unique_key,
 };
-use dst_update_publisher::models::UpdateNotification;
+use dst_update_publisher::models::build_canonical;
 use dst_update_publisher::publisher::{
-    canonical_dedup_key, is_build_processed, mark_build_processed, publish_update,
+    canonical_dedup_key, is_build_processed, mark_build_processed, publish_canonical,
 };
 use dst_update_publisher::rss::{fetch_rss_updates, get_latest_pc_update};
 use dst_update_publisher::update_page::{fetch_update_page, get_version_info};
 
+/// Phase 3 后的全管线（06 Step 5.4）：RSS → 版本页 → canonical → msgs.in → 双键标记。
 #[tokio::test]
-async fn full_pipeline_rss_to_redis() {
+async fn full_pipeline_rss_to_canonical() {
     let rss_xml = read_fixture("rss.xml");
     let html = read_fixture("update.html");
 
@@ -34,7 +35,7 @@ async fn full_pipeline_rss_to_redis() {
         .create_async()
         .await;
 
-    let redis_channel = unique_key("ch");
+    let redis_channel = unique_key("msgs.in");
     let redis_dedupe_key = unique_key("dedup");
 
     let config = make_config_with_redis(
@@ -63,13 +64,13 @@ async fn full_pipeline_rss_to_redis() {
         .expect("get_version_info failed");
 
     let translated = make_translated_announcement();
-    let notification = UpdateNotification::compose(latest, &page_entry, &translated);
+    let canonical = build_canonical(latest, &page_entry, "raw cleaned text", &translated)
+        .expect("build_canonical failed");
+    assert_eq!(canonical.dedup_key, format!("klei-dst-rss:{}", latest.build_number));
 
-    assert_eq!(notification.build_number, latest.build_number);
-
-    publish_update(&mut redis_conn, &redis_channel, &notification)
+    publish_canonical(&mut redis_conn, &redis_channel, &canonical)
         .await
-        .expect("publish_update failed");
+        .expect("publish_canonical failed");
 
     mark_build_processed(&mut redis_conn, &redis_dedupe_key, &latest.build_number)
         .await

@@ -3,12 +3,10 @@ use dst_update_publisher::config::load_config;
 use dst_update_publisher::error::{AppError, AppResult};
 use dst_update_publisher::failure::{handle_failure, FAILURE_STATE_KEY};
 use dst_update_publisher::json_translator::translate_json_file;
-use dst_update_publisher::models::{
-    build_canonical, AppConfig, ProcessOutcome, ReleaseChannel, UpdateNotification,
-};
+use dst_update_publisher::models::{build_canonical, AppConfig, ProcessOutcome, ReleaseChannel};
 use dst_update_publisher::po_search::{PoFileIndex, load_po_index};
 use dst_update_publisher::publisher::{
-    connect_redis, is_build_processed, mark_build_processed, publish_canonical, publish_update,
+    connect_redis, is_build_processed, mark_build_processed, publish_canonical,
 };
 use dst_update_publisher::rss::{fetch_rss_updates, get_latest_pc_update};
 use dst_update_publisher::translator::{create_llm_client, full_translate};
@@ -129,17 +127,11 @@ async fn run_pipeline(
     let canonical = build_canonical(rss_item, &page_entry, &announcement_text, &translated)
         .map_err(|e| StageError::at("build_canonical", e))?;
 
-    let notification = UpdateNotification::compose(rss_item, &page_entry, &translated);
-
-    let json = notification
-        .to_json()
-        .map_err(AppError::Serialization)
-        .map_err(|e| StageError::at("serialize", e))?;
-    tracing::info!("notification JSON length: {} chars", json.len());
-
-    publish_update(redis_conn, &config.redis_channel, &notification)
+    // 旧格式（UpdateNotification → dst:update/dst-updates）已于 Phase 3 停发：
+    // canonical 是唯一线上格式（06 Step 5.4）。
+    publish_canonical(redis_conn, &config.redis_canonical_channel, &canonical)
         .await
-        .map_err(|e| StageError::at("publish_update", e))?;
+        .map_err(|e| StageError::at("publish_canonical", e))?;
 
     // 旧格式可能已发出一次；canonical 发布失败则不标记去重（下轮整链重试），
     // 与"翻译失败不标 dedup"语义一致；下游按内容幂等，重复可接受。
@@ -161,7 +153,10 @@ async fn run_pipeline(
     }
 
     Ok(ProcessOutcome::Published {
-        build_number: notification.build_number,
+        build_number: canonical.dedup_key
+            .strip_prefix("klei-dst-rss:")
+            .unwrap_or(&canonical.dedup_key)
+            .to_string(),
     })
 }
 

@@ -1,14 +1,15 @@
 mod common;
 
-use common::{connect_test_redis, unique_key};
-use dst_update_publisher::models::{
-    MatchKind, PoSearchResult, PoTranslationEntry, UpdateNotification,
-};
-use dst_update_publisher::publisher::publish_update;
+use common::{connect_test_redis, make_translated_announcement, unique_key};
+use dst_update_publisher::models::{build_canonical, ReleaseChannel, RssUpdateItem, UpdatePageEntry};
+use dst_update_publisher::publisher::publish_canonical;
 
+/// Phase 3 后（06 Step 5.4）：canonical proto bytes 发布/订阅往返。
 #[tokio::test]
-async fn redis_pubsub_publish_and_receive() {
-    let channel_name = unique_key("ch");
+async fn redis_pubsub_publish_and_receive_canonical() {
+    use canonical_msg::prost::Message;
+
+    let channel_name = unique_key("msgs.in");
 
     let mut pub_conn = connect_test_redis().await;
 
@@ -26,28 +27,26 @@ async fn redis_pubsub_publish_and_receive() {
 
     let mut message_stream = pubsub.on_message();
 
-    let notification = UpdateNotification {
+    let rss_item = RssUpdateItem {
         build_number: "724783".into(),
-        revision: "2722".into(),
-        channel: "release".into(),
-        is_hotfix: false,
-        original_description: "original text".into(),
-        translated_description: "翻译文本".into(),
-        glossary: vec![PoSearchResult {
-            term: "Varg".into(),
-            candidates: vec![PoTranslationEntry {
-                original: "Varg".into(),
-                translation: "座狼".into(),
-                kind: MatchKind::Exact,
-            }],
-        }],
-        pub_date: "2025-04-28T12:00:00Z".into(),
         link: "https://example.com/update".into(),
+        description_html: String::new(),
+        pub_date: chrono::Utc::now(),
+        revision: "2722".into(),
     };
+    let page_entry = UpdatePageEntry {
+        revision: "2722".into(),
+        build_number: "724783".into(),
+        channel: ReleaseChannel::Release,
+        is_hotfix: false,
+    };
+    let translated = make_translated_announcement();
+    let canonical = build_canonical(&rss_item, &page_entry, "raw cleaned text", &translated)
+        .expect("build_canonical failed");
 
-    publish_update(&mut pub_conn, &channel_name, &notification)
+    publish_canonical(&mut pub_conn, &channel_name, &canonical)
         .await
-        .expect("publish_update failed");
+        .expect("publish_canonical failed");
 
     let timeout = tokio::time::Duration::from_secs(5);
     let received = tokio::time::timeout(timeout, async {
@@ -58,18 +57,18 @@ async fn redis_pubsub_publish_and_receive() {
     .expect("timeout waiting for message");
 
     let msg = received.expect("should receive a message");
-    let payload: String = msg.get_payload().expect("should get payload string");
+    let payload: Vec<u8> = msg.get_payload().expect("should get payload bytes");
 
-    let parsed: serde_json::Value = serde_json::from_str(&payload).expect("invalid JSON");
-    assert_eq!(parsed["build_number"], "724783");
-    assert_eq!(parsed["channel"], "release");
-    assert_eq!(parsed["is_hotfix"], false);
-    // glossary 是数组结构：term + 全部候选（含匹配类型）
-    assert_eq!(parsed["glossary"][0]["term"], "Varg");
-    assert_eq!(parsed["glossary"][0]["candidates"][0]["original"], "Varg");
-    assert_eq!(
-        parsed["glossary"][0]["candidates"][0]["translation"],
-        "座狼"
-    );
-    assert_eq!(parsed["glossary"][0]["candidates"][0]["kind"], "exact");
+    let decoded = canonical_msg::CanonicalMessage::decode(payload.as_slice())
+        .expect("decode canonical failed");
+    assert_eq!(decoded.kind, canonical_msg::MsgKind::Update as i32);
+    assert_eq!(decoded.dedup_key, "klei-dst-rss:724783");
+    assert_eq!(decoded.title, "饥荒联机版更新 build 724783 · r2722");
+    match decoded.domain.expect("domain must be set") {
+        canonical_msg::canonical_message::Domain::Dst(dst) => {
+            assert_eq!(dst.build_number, "724783");
+            assert_eq!(dst.revision, "2722");
+        }
+        _ => panic!("expected dst domain"),
+    }
 }
