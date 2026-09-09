@@ -2,7 +2,7 @@
 
 《饥荒联机版》（Don't Starve Together）更新公告自动翻译与推送工具。
 
-基于 Klei 官方论坛的 RSS 更新源，抓取更新公告，利用 LLM（大语言模型）将英文公告翻译为中文，并通过游戏 PO 本地化文件确保术语翻译准确，最终将翻译结果以 JSON 格式发布到 Redis Pub/Sub 通道。
+基于 Klei 官方论坛的 RSS 更新源，抓取更新公告，利用 LLM（大语言模型）将英文公告翻译为中文，并通过游戏 PO 本地化文件确保术语翻译准确，最终将翻译结果以 canonical（push.v1 protobuf）消息 XADD 到 Redis Stream。
 
 ## 功能
 
@@ -10,8 +10,8 @@
 - **版本信息抓取**：解析官方更新页面 HTML，获取 build number、revision、发布通道（release/beta）及是否为 hotfix
 - **PO 术语查询**：从游戏本地化 ZIP 包中加载 PO 文件，建立术语索引，供 LLM 翻译时查询专有术语的官方译名
 - **LLM 翻译**：通过 OpenAI 兼容 API 调用大语言模型，使用 Function Calling（`search_po_terms` 工具）实现术语辅助翻译
-- **Redis 推送**：将翻译后的更新通知以 JSON 格式通过 Redis `PUBLISH` 命令推送到指定通道
-- **双格式发布**：同一更新同时发布旧格式 JSON（`dst-updates`，旧链路行为不变）与 canonical 消息（push.v1 protobuf，`msgs.in`）
+- **Redis 推送**：将 canonical 消息（push.v1 protobuf）XADD 到 Redis Stream（`stream:msgs:in`，`data` field 承载 proto bytes）
+- **canonical 发布**：更新与失败告警统一走 canonical（push.v1）消息，XADD 到 `REDIS_MSGS_STREAM`（默认 `stream:msgs:in`）
 - **失败状态机**：链上任意阶段失败时发布 `kind=ALERT` 的 canonical 告警；连续 N 次或距首次失败超 24h 自动升级（tag `alert:escalated`），成功发布后隐式恢复
 - **去重机制**：使用 Redis 键记录已处理的 build number，避免重复翻译和推送同一版本
 - **双运行模式**：支持单次执行（`once`）和持续轮询（`poll`）两种运行方式
@@ -32,7 +32,7 @@ cp .env.example .env
 | `UPDATE_PAGE_URL`  | 否   | DST 更新页面地址               | Klei 官方更新页面        |
 | `REDIS_URL`        | 否   | Redis 连接地址                 | `redis://127.0.0.1:6379` |
 | `REDIS_CHANNEL`    | 否   | Redis Pub/Sub 发布通道         | `dst-updates`            |
-| `REDIS_CANONICAL_CHANNEL` | 否   | canonical（push.v1 proto）发布通道 | `msgs.in`          |
+| `REDIS_MSGS_STREAM` | 否   | canonical（push.v1 proto）发布 Stream | `stream:msgs:in`      |
 | `REDIS_DEDUPE_KEY` | 否   | 去重用的 Redis 键名            | `dst:last_build`         |
 | `FAILURE_ESCALATE_COUNT`  | 否   | 连续失败 N 次后升级告警 | `5`              |
 | `FAILURE_ESCALATE_HOURS`  | 否   | 距首次失败超过 N 小时后升级告警 | `24`           |
@@ -164,20 +164,20 @@ RUST_LOG=dst_update_publisher=debug cargo run --release
 - 同一查询词只保留首次出现（大小写不敏感去重），`glossary` 元素顺序即 LLM 工具调用的查询顺序；
 - LLM 未调用术语检索工具时，该字段为空数组 `[]`。
 
-## Canonical 频道（push.v1 契约）
+## Canonical Stream（push.v1 契约）
 
-Phase 1 起，每个更新在发布旧格式 JSON 的同时，还会以 **push.v1 canonical 消息**（protobuf 二进制载荷）发布到 `REDIS_CANONICAL_CHANNEL`（默认 `msgs.in`）。
+Phase 1 起，每个更新会以 **push.v1 canonical 消息**（protobuf 二进制载荷）写入 `REDIS_MSGS_STREAM`（默认 `stream:msgs:in`），Phase 5 起由 Pub/Sub PUBLISH 切换为 Stream XADD（`data` field 承载完整 proto bytes，fire-and-forget，可靠性由消费侧 pending 兜底）。
 
 - 契约单一事实源：`~/rust-projects/push-architecture/canonical-msg` 仓库（proto `push/v1/canonical.proto`），Rust 侧经 `canonical-msg` path 依赖引入生成代码；8 条契约不变量见该仓库 README（DESIGN §4.4）。
 - 中文译文进 `body_markdown`（presentation-ready，D1 偏离）；`body_text` 为公告原文清洗文本（降级链底端）；信源信息进 `dst` oneof domain，`original_description` 留档、正常渲染不展示。
-- 失败告警（`kind=ALERT`）同样发布到 canonical 频道：首发 → 静默重试 → 连续 `FAILURE_ESCALATE_COUNT` 次或距首次失败超 `FAILURE_ESCALATE_HOURS` 小时后升级（tag `alert:escalated`）。
+- 失败告警（`kind=ALERT`）同样写入 canonical stream：首发 → 静默重试 → 连续 `FAILURE_ESCALATE_COUNT` 次或距首次失败超 `FAILURE_ESCALATE_HOURS` 小时后升级（tag `alert:escalated`）。
 - 去重判定不变（仍只读旧键 `dst:last_build`）；新键 `dedup:klei-dst-rss:{build_number}` 自本批开始冗余记录，Phase 4 起成为唯一真相。
 
-可用 `canonical-msg` 的 `sub_dump` example 观察消息（protojson 打印）：
+可用 `canonical-msg` 的 example 观察消息（XREAD/XGROUP 消费 `stream:msgs:in` 后 protojson 打印）：
 
 ```bash
 cd ~/rust-projects/push-architecture/canonical-msg
-cargo run --release --example sub_dump -- --channel msgs.in
+cargo run --release --example sub_dump -- --stream stream:msgs:in
 ```
 
 ## 工作流程
@@ -196,9 +196,9 @@ cargo run --release --example sub_dump -- --channel msgs.in
    b. 将工具调用结果以 tool message 归还
    c. LLM 在同一上下文中生成最终译文
           ↓
-6. 组合 UpdateNotification（旧格式）+ 构造 canonical（build_canonical）
+6. 组合 UpdateNotification（旧格式，已停发）+ 构造 canonical（build_canonical）
           ↓
-7. 双发：PUBLISH 旧 JSON（dst-updates）+ canonical proto（msgs.in）
+7. 双发：XADD canonical proto 到 stream:msgs:in（两次，重复可接受，下游按内容幂等）
           ↓
 8. 标记去重（旧键 dst:last_build + 新键 dedup:klei-dst-rss:{bn}），
    成功发布后清除失败状态
@@ -207,7 +207,7 @@ cargo run --release --example sub_dump -- --channel msgs.in
 
 ### 下游消费
 
-下游服务通过 Redis `SUBSCRIBE` 命令订阅 `dst-updates` 通道即可接收旧格式更新通知；Phase 1 起新链路从 `msgs.in` 消费 canonical（push.v1）消息。例如：
+下游服务通过 Redis Stream 消费 `stream:msgs:in`（XREADGROUP，`data` field 为 canonical push.v1 proto bytes）。例如：
 
 - 机器人推送（Discord / QQ / 微信等）
 - 网站内容更新

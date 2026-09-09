@@ -105,7 +105,7 @@ pub fn build_alert_message(
     }
 }
 
-/// 链上任意阶段失败时调用：递增计数、记录首次失败时间、按决策发布告警到 canonical 频道。
+/// 链上任意阶段失败时调用：递增计数、记录首次失败时间、按决策发布告警到 canonical stream。
 /// 自身失败不向外传播（只记日志），避免状态机成为新的故障源。
 pub async fn handle_failure(
     stage: &str,
@@ -162,12 +162,12 @@ pub async fn handle_failure(
             AlertDecision::First => {
                 let alert =
                     build_alert_message(first_ts, now, stage, &err.to_string(), count as u64, false);
-                publish_canonical(conn, &config.redis_canonical_channel, &alert).await?;
+                publish_canonical(conn, &config.redis_msgs_stream, &alert).await?;
             }
             AlertDecision::Escalate if !already_escalated => {
                 let alert =
                     build_alert_message(first_ts, now, stage, &err.to_string(), count as u64, true);
-                publish_canonical(conn, &config.redis_canonical_channel, &alert).await?;
+                publish_canonical(conn, &config.redis_msgs_stream, &alert).await?;
                 redis::cmd("HSET")
                     .arg(FAILURE_STATE_KEY)
                     .arg(FAILURE_ESCALATED_FIELD)

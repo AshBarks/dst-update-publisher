@@ -216,7 +216,7 @@ pub struct AppConfig {
     pub update_page_url: String,
     pub redis_url: String,
     pub redis_channel: String,
-    pub redis_canonical_channel: String,
+    pub redis_msgs_stream: String,
     pub redis_dedupe_key: String,
     pub failure_escalate_count: u32,
     pub failure_escalate_hours: i64,

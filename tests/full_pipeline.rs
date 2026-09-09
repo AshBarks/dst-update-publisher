@@ -11,9 +11,11 @@ use dst_update_publisher::publisher::{
 use dst_update_publisher::rss::{fetch_rss_updates, get_latest_pc_update};
 use dst_update_publisher::update_page::{fetch_update_page, get_version_info};
 
-/// Phase 3 后的全管线（06 Step 5.4）：RSS → 版本页 → canonical → msgs.in → 双键标记。
+/// Phase 3 后的全管线（06 Step 5.4）：RSS → 版本页 → canonical → stream:msgs:in → 双键标记。
 #[tokio::test]
 async fn full_pipeline_rss_to_canonical() {
+    use canonical_msg::prost::Message;
+
     let rss_xml = read_fixture("rss.xml");
     let html = read_fixture("update.html");
 
@@ -35,13 +37,13 @@ async fn full_pipeline_rss_to_canonical() {
         .create_async()
         .await;
 
-    let redis_channel = unique_key("msgs.in");
+    let redis_stream = unique_key("stream:msgs:in");
     let redis_dedupe_key = unique_key("dedup");
 
     let config = make_config_with_redis(
         &format!("{}/rss", rss_server.url()),
         &page_server.url(),
-        &redis_channel,
+        &redis_stream,
         &redis_dedupe_key,
     );
 
@@ -68,9 +70,25 @@ async fn full_pipeline_rss_to_canonical() {
         .expect("build_canonical failed");
     assert_eq!(canonical.dedup_key, format!("klei-dst-rss:{}", latest.build_number));
 
-    publish_canonical(&mut redis_conn, &redis_channel, &canonical)
+    publish_canonical(&mut redis_conn, &redis_stream, &canonical)
         .await
         .expect("publish_canonical failed");
+
+    let reply: redis::streams::StreamRangeReply = redis::cmd("XRANGE")
+        .arg(&redis_stream)
+        .arg("-")
+        .arg("+")
+        .arg("COUNT")
+        .arg(1)
+        .query_async(&mut redis_conn)
+        .await
+        .expect("XRANGE failed");
+
+    assert_eq!(reply.ids.len(), 1, "stream 应恰好读到一条 entry");
+    let bytes: Vec<u8> = reply.ids[0].get("data").expect("entry 应含 data field");
+    let decoded = canonical_msg::CanonicalMessage::decode(bytes.as_slice())
+        .expect("stream data 应 decode 为 canonical");
+    assert_eq!(decoded, canonical);
 
     mark_build_processed(&mut redis_conn, &redis_dedupe_key, &latest.build_number)
         .await
@@ -82,6 +100,7 @@ async fn full_pipeline_rss_to_canonical() {
     assert!(is_processed, "should be processed after full pipeline");
 
     cleanup_key(&mut redis_conn, &redis_dedupe_key).await;
+    cleanup_key(&mut redis_conn, &redis_stream).await;
     cleanup_key(
         &mut redis_conn,
         &canonical_dedup_key(&latest.build_number),

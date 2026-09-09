@@ -129,13 +129,13 @@ async fn run_pipeline(
 
     // 旧格式（UpdateNotification → dst:update/dst-updates）已于 Phase 3 停发：
     // canonical 是唯一线上格式（06 Step 5.4）。
-    publish_canonical(redis_conn, &config.redis_canonical_channel, &canonical)
+    publish_canonical(redis_conn, &config.redis_msgs_stream, &canonical)
         .await
         .map_err(|e| StageError::at("publish_canonical", e))?;
 
     // 旧格式可能已发出一次；canonical 发布失败则不标记去重（下轮整链重试），
     // 与"翻译失败不标 dedup"语义一致；下游按内容幂等，重复可接受。
-    publish_canonical(redis_conn, &config.redis_canonical_channel, &canonical)
+    publish_canonical(redis_conn, &config.redis_msgs_stream, &canonical)
         .await
         .map_err(|e| StageError::at("publish_canonical", e))?;
 

@@ -41,8 +41,8 @@ pub fn load_config() -> Result<AppConfig, AppError> {
     let redis_channel =
         std::env::var("REDIS_CHANNEL").unwrap_or_else(|_| "dst-updates".to_string());
 
-    let redis_canonical_channel = std::env::var("REDIS_CANONICAL_CHANNEL")
-        .unwrap_or_else(|_| "msgs.in".to_string());
+    let redis_msgs_stream =
+        std::env::var("REDIS_MSGS_STREAM").unwrap_or_else(|_| "stream:msgs:in".to_string());
 
     let redis_dedupe_key =
         std::env::var("REDIS_DEDUPE_KEY").unwrap_or_else(|_| "dst:last_build".to_string());
@@ -91,7 +91,7 @@ pub fn load_config() -> Result<AppConfig, AppError> {
         update_page_url,
         redis_url,
         redis_channel,
-        redis_canonical_channel,
+        redis_msgs_stream,
         redis_dedupe_key,
         failure_escalate_count,
         failure_escalate_hours,

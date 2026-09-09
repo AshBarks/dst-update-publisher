@@ -34,46 +34,34 @@ fn sample_canonical() -> canonical_msg::CanonicalMessage {
 }
 
 #[tokio::test]
-async fn canonical_publish_subscribe_roundtrip() {
+async fn canonical_xadd_readback_roundtrip() {
     let mut conn = connect_test_redis().await;
-    let channel_name = unique_key("canon");
-
-    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
-    let sub_client = redis::Client::open(redis_url).expect("redis client");
-    let mut pubsub = sub_client
-        .get_async_pubsub()
-        .await
-        .expect("get_async_pubsub failed");
-
-    pubsub
-        .subscribe(&channel_name)
-        .await
-        .expect("subscribe failed");
-
-    let mut message_stream = pubsub.on_message();
+    let stream_name = unique_key("stream:msgs:in");
 
     let msg = sample_canonical();
-    publish_canonical(&mut conn, &channel_name, &msg)
+    publish_canonical(&mut conn, &stream_name, &msg)
         .await
         .expect("publish_canonical failed");
 
-    let timeout = tokio::time::Duration::from_secs(5);
-    let received = tokio::time::timeout(timeout, async {
-        use futures::StreamExt;
-        message_stream.next().await
-    })
-    .await
-    .expect("timeout waiting for message");
+    let reply: redis::streams::StreamRangeReply = redis::cmd("XRANGE")
+        .arg(&stream_name)
+        .arg("-")
+        .arg("+")
+        .arg("COUNT")
+        .arg(1)
+        .query_async(&mut conn)
+        .await
+        .expect("XRANGE failed");
 
-    let payload: Vec<u8> = received
-        .expect("should receive a message")
-        .get_payload()
-        .expect("should get binary payload");
+    assert_eq!(reply.ids.len(), 1, "stream 应恰好读到一条 entry");
+    let bytes: Vec<u8> = reply.ids[0].get("data").expect("entry 应含 data field");
 
-    let decoded = canonical_msg::CanonicalMessage::decode(payload.as_slice())
+    let decoded = canonical_msg::CanonicalMessage::decode(bytes.as_slice())
         .expect("payload should decode to canonical");
 
     assert_eq!(decoded, msg);
+
+    cleanup_key(&mut conn, &stream_name).await;
 }
 
 #[tokio::test]

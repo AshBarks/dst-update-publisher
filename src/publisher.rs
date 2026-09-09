@@ -73,26 +73,29 @@ pub async fn mark_build_processed(
     Ok(())
 }
 
-/// 发布 canonical 消息（proto 二进制载荷，Redis PUBLISH 支持）。
+/// 发布 canonical 消息到 Redis Stream（proto 二进制载荷进 `data` field，fire-and-forget，
+/// 与 PUBLISH 语义对齐；`data` field 名与 streams-lib 的 `DATA_FIELD` 常量一致）。
 pub async fn publish_canonical(
     conn: &mut redis::aio::MultiplexedConnection,
-    channel: &str,
+    stream: &str,
     message: &CanonicalMessage,
 ) -> AppResult<()> {
     let bytes = message.encode_to_vec();
 
-    redis::cmd("PUBLISH")
-        .arg(channel)
+    redis::cmd("XADD")
+        .arg(stream)
+        .arg("*")
+        .arg("data")
         .arg(&bytes)
         .exec_async(conn)
         .await
         .map_err(AppError::Redis)?;
 
     tracing::info!(
-        "published canonical message kind={} id={} to Redis channel '{}'",
+        "published canonical message kind={} id={} to Redis stream '{}'",
         message.kind,
         message.id,
-        channel
+        stream
     );
 
     Ok(())
