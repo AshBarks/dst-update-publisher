@@ -1,12 +1,13 @@
 use async_openai::{
     Client,
     config::OpenAIConfig,
-    types::{
+    types::chat::{
+        ChatCompletionMessageToolCall, ChatCompletionMessageToolCalls,
         ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
         ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs,
         ChatCompletionRequestToolMessageContent, ChatCompletionRequestUserMessageArgs,
-        ChatCompletionTool, ChatCompletionToolArgs, ChatCompletionToolType,
-        CreateChatCompletionRequestArgs, FunctionObjectArgs,
+        ChatCompletionTool, ChatCompletionTools, CreateChatCompletionRequestArgs,
+        FunctionObjectArgs,
     },
 };
 use serde_json::json;
@@ -46,34 +47,31 @@ pub fn create_llm_client(config: &AppConfig) -> Client<OpenAIConfig> {
     Client::with_config(openai_config)
 }
 
-fn build_tools() -> AppResult<Vec<ChatCompletionTool>> {
-    let tool = ChatCompletionToolArgs::default()
-        .r#type(ChatCompletionToolType::Function)
-        .function(
-            FunctionObjectArgs::default()
-                .name("search_po_terms")
-                .description("查询游戏术语的官方中文译名。在游戏 PO 本地化文件中搜索指定英文术语，返回匹配的中文翻译条目。")
-                .parameters(json!({
-                    "type": "object",
-                    "properties": {
-                        "terms": {
-                            "type": "array",
-                            "items": { "type": "string" },
-                            "description": "需要查询的英文术语列表，可同时查询多个术语"
-                        }
-                    },
-                    "required": ["terms"]
-                }))
-                .build()
-                .map_err(|e| AppError::LlmApi(format!("failed to build function object: {}", e)))?)
-        .build()
-        .map_err(|e| AppError::LlmApi(format!("failed to build tool: {}", e)))?;
+fn build_tools() -> AppResult<Vec<ChatCompletionTools>> {
+    let tool = ChatCompletionTool {
+        function: FunctionObjectArgs::default()
+            .name("search_po_terms")
+            .description("查询游戏术语的官方中文译名。在游戏 PO 本地化文件中搜索指定英文术语，返回匹配的中文翻译条目。")
+            .parameters(json!({
+                "type": "object",
+                "properties": {
+                    "terms": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "需要查询的英文术语列表，可同时查询多个术语"
+                    }
+                },
+                "required": ["terms"]
+            }))
+            .build()
+            .map_err(|e| AppError::LlmApi(format!("failed to build function object: {}", e)))?,
+    };
 
-    Ok(vec![tool])
+    Ok(vec![ChatCompletionTools::Function(tool)])
 }
 
 fn execute_tool_call(
-    tool_call: &async_openai::types::ChatCompletionMessageToolCall,
+    tool_call: &ChatCompletionMessageToolCall,
     po_index: &PoFileIndex,
 ) -> AppResult<(Vec<PoSearchResult>, String)> {
     let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
@@ -141,14 +139,26 @@ pub async fn full_translate(
 
     let tool_calls = first_message.tool_calls.clone();
 
+    // 0.42：响应里的 tool_calls 是 enum（Function/Custom），这里只处理 function 型调用，
+    // 同时把 enum 列表原样回传给 assistant 消息（保持上下文逐字回显）。
+    let fn_tool_calls: Vec<ChatCompletionMessageToolCall> = tool_calls
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|tc| match tc {
+            ChatCompletionMessageToolCalls::Function(c) => Some(c),
+            _ => None,
+        })
+        .collect();
+
     if let Some(tool_calls) = tool_calls {
         let assistant_msg = ChatCompletionRequestAssistantMessageArgs::default()
-            .tool_calls(tool_calls.clone())
+            .tool_calls(tool_calls)
             .build()
             .map_err(|e| AppError::LlmApi(format!("failed to build assistant message: {}", e)))?;
         messages.push(assistant_msg.into());
 
-        for tool_call in &tool_calls {
+        for tool_call in &fn_tool_calls {
             let function_name = &tool_call.function.name;
 
             tracing::info!(

@@ -6,8 +6,8 @@ edition = "2024"
 [dependencies]
 reqwest = { version = "0.12", features = ["rustls-tls"] }
 rss = "2"
-scraper = "0.25"
-zip = "2"
+scraper = "0.27"
+zip = "8"
 polib = "0.3"
 redis = { version = "0.27", features = ["tokio-comp"] }
 tokio = { version = "1", features = ["full"] }
@@ -18,7 +18,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dotenvy = "0.15"
 thiserror = "2"
 anyhow = "1"
-async-openai = "0.29"
+async-openai = { version = "0.42", features = ["chat-completion"] }
 chrono = "0.4"
 url = "2"
 once_cell = "1"
