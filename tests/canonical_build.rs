@@ -1,16 +1,12 @@
 mod common;
 
-use canonical_msg::{canonical_message, MsgKind};
+use canonical_msg::{MsgKind, canonical_message};
 use dst_update_publisher::failure::{AlertDecision, build_alert_message, decide};
 use dst_update_publisher::models::{
     ReleaseChannel, RssUpdateItem, TranslatedAnnouncement, UpdatePageEntry, build_canonical,
 };
 
-fn canonical_fixture() -> (
-    RssUpdateItem,
-    UpdatePageEntry,
-    TranslatedAnnouncement,
-) {
+fn canonical_fixture() -> (RssUpdateItem, UpdatePageEntry, TranslatedAnnouncement) {
     let rss_item = RssUpdateItem {
         build_number: "724783".into(),
         link: "https://forums.kleientertainment.com/game-updates/dst/724783-r2722/".into(),
@@ -53,7 +49,10 @@ fn build_canonical_maps_all_fields() {
     assert_eq!(msg.body_text, "raw cleaned text");
     assert_eq!(msg.links.len(), 1);
     assert_eq!(msg.links[0].rel, "original");
-    assert_eq!(msg.links[0].url, "https://forums.kleientertainment.com/game-updates/dst/724783-r2722/");
+    assert_eq!(
+        msg.links[0].url,
+        "https://forums.kleientertainment.com/game-updates/dst/724783-r2722/"
+    );
     assert!(msg.tags.is_empty());
     assert_eq!(
         msg.published_at.as_ref().unwrap().seconds,
@@ -65,7 +64,10 @@ fn build_canonical_maps_all_fields() {
             assert_eq!(dst.revision, "2722");
             assert_eq!(dst.channel, canonical_msg::ReleaseChannel::Release as i32);
             assert!(!dst.is_hotfix);
-            assert_eq!(dst.original_description, "Changes Added Chessmaster Circuit.");
+            assert_eq!(
+                dst.original_description,
+                "Changes Added Chessmaster Circuit."
+            );
         }
         Some(canonical_message::Domain::Chat(_)) => panic!("domain 应为 Dst"),
         None => panic!("domain 缺失"),
@@ -113,7 +115,10 @@ fn decide_escalate_by_count_threshold() {
 fn decide_escalate_by_time_threshold() {
     let sec = 24 * 3600;
     // 距首次失败 24h 整前仍 Silent，达到即 Escalate
-    assert_eq!(decide(2, 1000, 1000 + sec - 1, 5, 24), AlertDecision::Silent);
+    assert_eq!(
+        decide(2, 1000, 1000 + sec - 1, 5, 24),
+        AlertDecision::Silent
+    );
     assert_eq!(decide(2, 1000, 1000 + sec, 5, 24), AlertDecision::Escalate);
 }
 

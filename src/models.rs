@@ -2,8 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use canonical_msg::{
-    canonical_message, CanonicalMessage, DstUpdate as CanonicalDstUpdate, Link, MsgKind, Source,
-    SourceKind,
+    CanonicalMessage, DstUpdate as CanonicalDstUpdate, Link, MsgKind, Source, SourceKind,
+    canonical_message,
 };
 
 use crate::error::{AppError, AppResult};
@@ -181,7 +181,7 @@ pub fn build_canonical(
     }
 
     Ok(CanonicalMessage {
-        id: ulid::Ulid::new().to_string(),
+        id: ulid::Ulid::generate().to_string(),
         source: Some(klei_source()),
         dedup_key: format!("{KLEI_DST_SOURCE_ID}:{}", rss_item.build_number),
         kind: MsgKind::Update as i32,
@@ -421,7 +421,10 @@ mod tests {
 
         assert_eq!(msg.dedup_key, "klei-dst-rss:724783");
         assert_eq!(msg.title, "饥荒联机版更新 build 724783 · r2722");
-        assert_eq!(msg.body_markdown, "中文译文，已含术语括号注释（座狼 (Varg)）");
+        assert_eq!(
+            msg.body_markdown,
+            "中文译文，已含术语括号注释（座狼 (Varg)）"
+        );
         assert_eq!(msg.body_text, "raw cleaned text");
 
         assert_eq!(msg.links.len(), 1);

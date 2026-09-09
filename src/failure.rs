@@ -10,7 +10,7 @@ use redis::aio::MultiplexedConnection;
 use canonical_msg::{CanonicalMessage, MsgKind};
 
 use crate::error::AppError;
-use crate::models::{klei_source, AppConfig};
+use crate::models::{AppConfig, klei_source};
 use crate::publisher::publish_canonical;
 
 pub const FAILURE_STATE_KEY: &str = "dst:failure_state";
@@ -88,7 +88,7 @@ pub fn build_alert_message(
     }
 
     CanonicalMessage {
-        id: ulid::Ulid::new().to_string(),
+        id: ulid::Ulid::generate().to_string(),
         source: Some(klei_source()),
         dedup_key: format!("{ALERT_DEDUP_PREFIX}{dedup_date}"),
         kind: MsgKind::Alert as i32,
@@ -160,8 +160,14 @@ pub async fn handle_failure(
 
         match decision {
             AlertDecision::First => {
-                let alert =
-                    build_alert_message(first_ts, now, stage, &err.to_string(), count as u64, false);
+                let alert = build_alert_message(
+                    first_ts,
+                    now,
+                    stage,
+                    &err.to_string(),
+                    count as u64,
+                    false,
+                );
                 publish_canonical(conn, &config.redis_msgs_stream, &alert).await?;
             }
             AlertDecision::Escalate if !already_escalated => {

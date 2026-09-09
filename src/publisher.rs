@@ -1,5 +1,5 @@
-use canonical_msg::prost::Message;
 use canonical_msg::CanonicalMessage;
+use canonical_msg::prost::Message;
 
 use crate::error::{AppError, AppResult};
 use crate::models::AppConfig;
@@ -14,7 +14,7 @@ pub async fn connect_redis(config: &AppConfig) -> AppResult<redis::aio::Multiple
     let client = redis::Client::open(config.redis_url.as_str()).map_err(AppError::Redis)?;
 
     let conn = client
-        .get_multiplexed_tokio_connection()
+        .get_multiplexed_async_connection()
         .await
         .map_err(AppError::Redis)?;
 

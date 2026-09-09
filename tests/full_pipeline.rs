@@ -68,7 +68,10 @@ async fn full_pipeline_rss_to_canonical() {
     let translated = make_translated_announcement();
     let canonical = build_canonical(latest, &page_entry, "raw cleaned text", &translated)
         .expect("build_canonical failed");
-    assert_eq!(canonical.dedup_key, format!("klei-dst-rss:{}", latest.build_number));
+    assert_eq!(
+        canonical.dedup_key,
+        format!("klei-dst-rss:{}", latest.build_number)
+    );
 
     publish_canonical(&mut redis_conn, &redis_stream, &canonical)
         .await
@@ -101,9 +104,5 @@ async fn full_pipeline_rss_to_canonical() {
 
     cleanup_key(&mut redis_conn, &redis_dedupe_key).await;
     cleanup_key(&mut redis_conn, &redis_stream).await;
-    cleanup_key(
-        &mut redis_conn,
-        &canonical_dedup_key(&latest.build_number),
-    )
-    .await;
+    cleanup_key(&mut redis_conn, &canonical_dedup_key(&latest.build_number)).await;
 }

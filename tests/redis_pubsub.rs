@@ -1,7 +1,9 @@
 mod common;
 
 use common::{cleanup_key, connect_test_redis, make_translated_announcement, unique_key};
-use dst_update_publisher::models::{build_canonical, ReleaseChannel, RssUpdateItem, UpdatePageEntry};
+use dst_update_publisher::models::{
+    ReleaseChannel, RssUpdateItem, UpdatePageEntry, build_canonical,
+};
 use dst_update_publisher::publisher::publish_canonical;
 
 /// Phase 5（16-B）：canonical proto bytes XADD → XRANGE 读回往返。
@@ -47,8 +49,8 @@ async fn redis_stream_xadd_and_readback_canonical() {
     assert_eq!(reply.ids.len(), 1, "stream 应恰好读到一条 entry");
     let bytes: Vec<u8> = reply.ids[0].get("data").expect("entry 应含 data field");
 
-    let decoded = canonical_msg::CanonicalMessage::decode(bytes.as_slice())
-        .expect("decode canonical failed");
+    let decoded =
+        canonical_msg::CanonicalMessage::decode(bytes.as_slice()).expect("decode canonical failed");
     assert_eq!(decoded.kind, canonical_msg::MsgKind::Update as i32);
     assert_eq!(decoded.dedup_key, "klei-dst-rss:724783");
     assert_eq!(decoded.title, "饥荒联机版更新 build 724783 · r2722");

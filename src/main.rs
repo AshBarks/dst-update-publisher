@@ -1,9 +1,9 @@
 use dst_update_publisher::cli::{CliArgs, RunMode};
 use dst_update_publisher::config::load_config;
 use dst_update_publisher::error::{AppError, AppResult};
-use dst_update_publisher::failure::{handle_failure, FAILURE_STATE_KEY};
+use dst_update_publisher::failure::{FAILURE_STATE_KEY, handle_failure};
 use dst_update_publisher::json_translator::translate_json_file;
-use dst_update_publisher::models::{build_canonical, AppConfig, ProcessOutcome, ReleaseChannel};
+use dst_update_publisher::models::{AppConfig, ProcessOutcome, ReleaseChannel, build_canonical};
 use dst_update_publisher::po_search::{PoFileIndex, load_po_index};
 use dst_update_publisher::publisher::{
     connect_redis, is_build_processed, mark_build_processed, publish_canonical,
@@ -149,11 +149,15 @@ async fn run_pipeline(
         .exec_async(redis_conn)
         .await
     {
-        tracing::warn!("failed to clear failure state after successful publish: {}", e);
+        tracing::warn!(
+            "failed to clear failure state after successful publish: {}",
+            e
+        );
     }
 
     Ok(ProcessOutcome::Published {
-        build_number: canonical.dedup_key
+        build_number: canonical
+            .dedup_key
             .strip_prefix("klei-dst-rss:")
             .unwrap_or(&canonical.dedup_key)
             .to_string(),
