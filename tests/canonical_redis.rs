@@ -100,3 +100,16 @@ async fn mark_writes_both_legacy_and_canonical_keys() {
     cleanup_key(&mut conn, &old_key).await;
     cleanup_key(&mut conn, &canonical_dedup_key(&build_number)).await;
 }
+
+/// 回归防护（2026-09-10）：Phase 3 删旧格式时 `run_pipeline` 里残留了第二处
+/// `publish_canonical` 调用，每条 UPDATE 被 XADD 两次（双推事故）。既有集成测试
+/// 都直接调 `publish_canonical`，覆盖不到 `main.rs` 的调用点，这里静态断言唯一性。
+#[test]
+fn pipeline_publishes_canonical_exactly_once() {
+    let main_rs = include_str!("../src/main.rs");
+    assert_eq!(
+        main_rs.matches("publish_canonical(").count(),
+        1,
+        "run_pipeline 必须恰好调用一次 publish_canonical（重复调用会导致双推）"
+    );
+}
