@@ -38,7 +38,9 @@ impl<'de> Deserialize<'de> for ReleaseChannel {
 pub struct RssUpdateItem {
     pub build_number: String,
     pub link: String,
-    pub description_html: String,
+    /// RSS `<description>`：论坛导出的纯文本（无 HTML 标签，保留 tab 缩进与空行），
+    /// 仅作原帖不可用时的结构化降级输入。
+    pub description_text: String,
     pub pub_date: DateTime<Utc>,
     pub revision: String,
 }
@@ -48,7 +50,7 @@ impl RssUpdateItem {
         let title = item.title.clone().unwrap_or_default();
         let link = item.link.clone().unwrap_or_default();
 
-        let description_html = item.description.clone().unwrap_or_default();
+        let description_text = item.description.clone().unwrap_or_default();
 
         let pub_date_str = item.pub_date.clone().unwrap_or_default();
         let pub_date = chrono::DateTime::parse_from_rfc2822(&pub_date_str)
@@ -65,7 +67,7 @@ impl RssUpdateItem {
         Ok(RssUpdateItem {
             build_number: title,
             link,
-            description_html,
+            description_text,
             pub_date,
             revision,
         })
@@ -167,10 +169,10 @@ fn canonical_release_channel(channel: &ReleaseChannel) -> canonical_msg::Release
 /// 构造 canonical（push.v1）更新消息。字段映射逐条对应 implementation/02 Step 2 表格。
 /// translated_text 为空视为翻译失败（返回 Err，进失败状态机）——
 /// 防不变量 #1 违规消息上线（body_markdown 是中文译文的主展示正文）。
+/// body_text 取中文译文去 Markdown 后的纯文本（降级链底端 / 纯文本终端）。
 pub fn build_canonical(
     rss_item: &RssUpdateItem,
     page_entry: &UpdatePageEntry,
-    announcement_text: &str,
     translated: &TranslatedAnnouncement,
 ) -> AppResult<CanonicalMessage> {
     let body_markdown = translated.translated_text.clone();
@@ -179,6 +181,12 @@ pub fn build_canonical(
             "translated_text is empty after trim; refusing to build canonical message".to_string(),
         ));
     }
+    let plain = crate::content::markdown_to_plain(&body_markdown);
+    let body_text = if plain.is_empty() {
+        body_markdown.clone()
+    } else {
+        plain
+    };
 
     Ok(CanonicalMessage {
         id: ulid::Ulid::generate().to_string(),
@@ -190,7 +198,7 @@ pub fn build_canonical(
             rss_item.build_number, rss_item.revision
         ),
         body_markdown,
-        body_text: announcement_text.to_string(),
+        body_text,
         links: vec![Link {
             rel: "original".to_string(),
             url: rss_item.link.clone(),
@@ -304,7 +312,7 @@ mod tests {
         let item = RssUpdateItem {
             build_number: "724783".into(),
             link: "https://forums.kleientertainment.com/game-updates/dst/724783-r2722/".into(),
-            description_html: String::new(),
+            description_text: String::new(),
             pub_date: Utc::now(),
             revision: "2722".into(),
         };
@@ -317,7 +325,7 @@ mod tests {
             build_number: "112100".into(),
             link: "https://forums.kleientertainment.com/game-updates/dst_xboxone/112100-r2721/"
                 .into(),
-            description_html: String::new(),
+            description_text: String::new(),
             pub_date: Utc::now(),
             revision: "2721".into(),
         };
@@ -329,7 +337,7 @@ mod tests {
         let item = RssUpdateItem {
             build_number: "3380".into(),
             link: "https://forums.kleientertainment.com/game-updates/dst_ps4/3380-r2719/".into(),
-            description_html: String::new(),
+            description_text: String::new(),
             pub_date: Utc::now(),
             revision: "2719".into(),
         };
@@ -380,7 +388,7 @@ mod tests {
         let rss_item = RssUpdateItem {
             build_number: "724783".into(),
             link: "https://forums.kleientertainment.com/game-updates/dst/724783-r2722/".into(),
-            description_html: String::new(),
+            description_text: String::new(),
             pub_date: DateTime::parse_from_rfc3339("2025-04-28T12:00:00Z")
                 .unwrap()
                 .to_utc(),
@@ -396,7 +404,7 @@ mod tests {
 
         let translated = TranslatedAnnouncement {
             original_text: "original english announcement".into(),
-            translated_text: "中文译文，已含术语括号注释（座狼 (Varg)）".into(),
+            translated_text: "## 新内容\n\n- 修复了一个崩溃问题".into(),
             search_results: vec![],
         };
 
@@ -407,8 +415,8 @@ mod tests {
     fn build_canonical_field_mapping() {
         let (rss_item, page_entry, translated) = canonical_fixtures();
 
-        let msg = build_canonical(&rss_item, &page_entry, "raw cleaned text", &translated)
-            .expect("build_canonical failed");
+        let msg =
+            build_canonical(&rss_item, &page_entry, &translated).expect("build_canonical failed");
 
         assert_eq!(msg.kind, MsgKind::Update as i32);
         assert!(!msg.id.is_empty(), "id 应为新 ULID");
@@ -421,11 +429,8 @@ mod tests {
 
         assert_eq!(msg.dedup_key, "klei-dst-rss:724783");
         assert_eq!(msg.title, "饥荒联机版更新 build 724783 · r2722");
-        assert_eq!(
-            msg.body_markdown,
-            "中文译文，已含术语括号注释（座狼 (Varg)）"
-        );
-        assert_eq!(msg.body_text, "raw cleaned text");
+        assert_eq!(msg.body_markdown, "## 新内容\n\n- 修复了一个崩溃问题");
+        assert_eq!(msg.body_text, "新内容\n\n修复了一个崩溃问题");
 
         assert_eq!(msg.links.len(), 1);
         assert_eq!(msg.links[0].rel, "original");
@@ -457,8 +462,8 @@ mod tests {
         use canonical_msg::prost::Message;
 
         let (rss_item, page_entry, translated) = canonical_fixtures();
-        let msg = build_canonical(&rss_item, &page_entry, "raw text", &translated)
-            .expect("build_canonical failed");
+        let msg =
+            build_canonical(&rss_item, &page_entry, &translated).expect("build_canonical failed");
 
         let bytes = msg.encode_to_vec();
         let decoded = CanonicalMessage::decode(bytes.as_slice()).expect("decode failed");
@@ -471,7 +476,7 @@ mod tests {
         let mut empty = translated;
         empty.translated_text = "   \n  ".into();
 
-        let result = build_canonical(&rss_item, &page_entry, "raw text", &empty);
+        let result = build_canonical(&rss_item, &page_entry, &empty);
         assert!(result.is_err());
     }
 }

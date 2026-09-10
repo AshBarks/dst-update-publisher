@@ -8,6 +8,7 @@
 
 - **RSS 监控**：从 Klei 官方论坛 RSS 源获取 DST PC 版更新公告，自动筛选 PC 平台条目
 - **版本信息抓取**：解析官方更新页面 HTML，获取 build number、revision、发布通道（release/beta）及是否为 hotfix
+- **正文结构化**：抓取 RSS 条目对应的论坛原帖 HTML，把公告正文转为 Markdown（二级标题、无序列表、嵌套层级、链接），LLM 按结构翻译；原帖不可用时回退 RSS 描述的缩进层级恢复结构
 - **PO 术语查询**：从游戏本地化 ZIP 包中加载 PO 文件，建立术语索引，供 LLM 翻译时查询专有术语的官方译名
 - **LLM 翻译**：通过 OpenAI 兼容 API 调用大语言模型，使用 Function Calling（`search_po_terms` 工具）实现术语辅助翻译
 - **Redis 推送**：将 canonical 消息（push.v1 protobuf）XADD 到 Redis Stream（`stream:msgs:in`，`data` field 承载 proto bytes）
@@ -169,7 +170,7 @@ RUST_LOG=dst_update_publisher=debug cargo run --release
 Phase 1 起，每个更新会以 **push.v1 canonical 消息**（protobuf 二进制载荷）写入 `REDIS_MSGS_STREAM`（默认 `stream:msgs:in`），Phase 5 起由 Pub/Sub PUBLISH 切换为 Stream XADD（`data` field 承载完整 proto bytes，fire-and-forget，可靠性由消费侧 pending 兜底）。
 
 - 契约单一事实源：`~/rust-projects/push-architecture/canonical-msg` 仓库（proto `push/v1/canonical.proto`），Rust 侧经 `canonical-msg` path 依赖引入生成代码；8 条契约不变量见该仓库 README（DESIGN §4.4）。
-- 中文译文进 `body_markdown`（presentation-ready，D1 偏离）；`body_text` 为公告原文清洗文本（降级链底端）；信源信息进 `dst` oneof domain，`original_description` 留档、正常渲染不展示。
+- 中文译文进 `body_markdown`（Markdown，标题/列表结构保留，presentation-ready）；`body_text` 为中文译文去 Markdown 的纯文本（降级链底端 / 纯文本终端）；信源信息进 `dst` oneof domain，`original_description` 为英文原文（Markdown）留档、正常渲染不展示。
 - 失败告警（`kind=ALERT`）同样写入 canonical stream：首发 → 静默重试 → 连续 `FAILURE_ESCALATE_COUNT` 次或距首次失败超 `FAILURE_ESCALATE_HOURS` 小时后升级（tag `alert:escalated`）。
 - 去重判定不变（仍只读旧键 `dst:last_build`）；新键 `dedup:klei-dst-rss:{build_number}` 自本批开始冗余记录，Phase 4 起成为唯一真相。
 
@@ -189,16 +190,18 @@ cargo run --release --example sub_dump -- --stream stream:msgs:in
           ↓ (未处理)
 3. 抓取更新页面 HTML，获取版本详细信息
           ↓
-4. 将 RSS 公告 HTML 转为纯文本
+4. 抓取原帖 HTML 并转为 Markdown（示例：`## Changes` / `- 条目` / 嵌套
+   `  - 子项`）；原帖失败则按 RSS 描述缩进恢复结构
           ↓
-5. 调用 LLM 翻译（标准 Function Calling 流程）：
+5. 调用 LLM 翻译（标准 Function Calling 流程，保留 Markdown 结构）：
    a. LLM 通过 search_po_terms 工具提取并查询术语
    b. 将工具调用结果以 tool message 归还
    c. LLM 在同一上下文中生成最终译文
           ↓
-6. 组合 UpdateNotification（旧格式，已停发）+ 构造 canonical（build_canonical）
+6. 构造 canonical（build_canonical）：body_markdown = 结构化中文译文，
+   body_text = 去 Markdown 的纯文本，original_description = 英文原文留档
           ↓
-7. 双发：XADD canonical proto 到 stream:msgs:in（两次，重复可接受，下游按内容幂等）
+7. XADD canonical proto 到 stream:msgs:in（恰好一次；失败不标记去重，下轮整链重试）
           ↓
 8. 标记去重（旧键 dst:last_build + 新键 dedup:klei-dst-rss:{bn}），
    成功发布后清除失败状态

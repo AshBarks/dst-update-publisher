@@ -13,7 +13,7 @@ fn sample_canonical() -> canonical_msg::CanonicalMessage {
     let rss_item = RssUpdateItem {
         build_number: "724783".into(),
         link: "https://forums.kleientertainment.com/game-updates/dst/724783-r2722/".into(),
-        description_html: String::new(),
+        description_text: String::new(),
         pub_date: chrono::DateTime::parse_from_rfc3339("2025-04-28T12:00:00Z")
             .unwrap()
             .to_utc(),
@@ -30,7 +30,7 @@ fn sample_canonical() -> canonical_msg::CanonicalMessage {
         translated_text: "更改 新增国际象棋大师电路。".into(),
         search_results: vec![],
     };
-    build_canonical(&rss_item, &page_entry, "raw", &translated).expect("build_canonical failed")
+    build_canonical(&rss_item, &page_entry, &translated).expect("build_canonical failed")
 }
 
 #[tokio::test]

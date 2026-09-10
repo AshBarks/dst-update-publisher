@@ -18,7 +18,7 @@ async fn redis_stream_xadd_and_readback_canonical() {
     let rss_item = RssUpdateItem {
         build_number: "724783".into(),
         link: "https://example.com/update".into(),
-        description_html: String::new(),
+        description_text: String::new(),
         pub_date: chrono::Utc::now(),
         revision: "2722".into(),
     };
@@ -29,8 +29,8 @@ async fn redis_stream_xadd_and_readback_canonical() {
         is_hotfix: false,
     };
     let translated = make_translated_announcement();
-    let canonical = build_canonical(&rss_item, &page_entry, "raw cleaned text", &translated)
-        .expect("build_canonical failed");
+    let canonical =
+        build_canonical(&rss_item, &page_entry, &translated).expect("build_canonical failed");
 
     publish_canonical(&mut conn, &stream_name, &canonical)
         .await

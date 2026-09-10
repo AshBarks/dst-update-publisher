@@ -10,7 +10,7 @@ fn canonical_fixture() -> (RssUpdateItem, UpdatePageEntry, TranslatedAnnouncemen
     let rss_item = RssUpdateItem {
         build_number: "724783".into(),
         link: "https://forums.kleientertainment.com/game-updates/dst/724783-r2722/".into(),
-        description_html: String::new(),
+        description_text: String::new(),
         pub_date: chrono::DateTime::parse_from_rfc3339("2025-04-28T12:00:00Z")
             .unwrap()
             .to_utc(),
@@ -25,8 +25,8 @@ fn canonical_fixture() -> (RssUpdateItem, UpdatePageEntry, TranslatedAnnouncemen
     };
 
     let translated = TranslatedAnnouncement {
-        original_text: "Changes Added Chessmaster Circuit.".into(),
-        translated_text: "更改 新增国际象棋大师电路。".into(),
+        original_text: "## Changes\n\nAdded Chessmaster Circuit.".into(),
+        translated_text: "## 更改\n\n新增国际象棋大师电路。".into(),
         search_results: vec![],
     };
 
@@ -37,16 +37,15 @@ fn canonical_fixture() -> (RssUpdateItem, UpdatePageEntry, TranslatedAnnouncemen
 fn build_canonical_maps_all_fields() {
     let (rss_item, page_entry, translated) = canonical_fixture();
 
-    let msg = build_canonical(&rss_item, &page_entry, "raw cleaned text", &translated)
-        .expect("build_canonical failed");
+    let msg = build_canonical(&rss_item, &page_entry, &translated).expect("build_canonical failed");
 
     assert_eq!(msg.kind, MsgKind::Update as i32);
     assert_eq!(msg.id.len(), 26, "id 应为 ULID");
     assert_eq!(msg.source.as_ref().unwrap().id, "klei-dst-rss");
     assert_eq!(msg.dedup_key, "klei-dst-rss:724783");
     assert_eq!(msg.title, "饥荒联机版更新 build 724783 · r2722");
-    assert_eq!(msg.body_markdown, "更改 新增国际象棋大师电路。");
-    assert_eq!(msg.body_text, "raw cleaned text");
+    assert_eq!(msg.body_markdown, "## 更改\n\n新增国际象棋大师电路。");
+    assert_eq!(msg.body_text, "更改\n\n新增国际象棋大师电路。");
     assert_eq!(msg.links.len(), 1);
     assert_eq!(msg.links[0].rel, "original");
     assert_eq!(
@@ -66,7 +65,7 @@ fn build_canonical_maps_all_fields() {
             assert!(!dst.is_hotfix);
             assert_eq!(
                 dst.original_description,
-                "Changes Added Chessmaster Circuit."
+                "## Changes\n\nAdded Chessmaster Circuit."
             );
         }
         Some(canonical_message::Domain::Chat(_)) => panic!("domain 应为 Dst"),
@@ -79,7 +78,7 @@ fn build_canonical_encode_roundtrip() {
     use canonical_msg::prost::Message;
 
     let (rss_item, page_entry, translated) = canonical_fixture();
-    let msg = build_canonical(&rss_item, &page_entry, "raw", &translated).unwrap();
+    let msg = build_canonical(&rss_item, &page_entry, &translated).unwrap();
     let bytes = msg.encode_to_vec();
     let decoded = canonical_msg::CanonicalMessage::decode(bytes.as_slice()).unwrap();
     assert_eq!(decoded, msg);
@@ -90,7 +89,7 @@ fn build_canonical_rejects_empty_translation() {
     let (rss_item, page_entry, translated) = canonical_fixture();
     let mut translated = translated;
     translated.translated_text = " \t\n ".into();
-    assert!(build_canonical(&rss_item, &page_entry, "raw", &translated).is_err());
+    assert!(build_canonical(&rss_item, &page_entry, &translated).is_err());
 }
 
 #[test]

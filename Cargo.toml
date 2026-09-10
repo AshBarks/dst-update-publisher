@@ -23,7 +23,6 @@ chrono = "0.4"
 url = "2"
 once_cell = "1"
 clap = { version = "4", features = ["derive"] }
-html2text = "0.13"
 futures = "0.3"
 canonical-msg = { path = "../push-architecture/canonical-msg" }
 ulid = "3"

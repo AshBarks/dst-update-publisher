@@ -24,19 +24,57 @@ Guidelines:
 1. Translation must be accurate, fluent, and match the tone of game announcements.
 2. First, extract from the patch notes any words or phrases you think are game terms (items, skills, statuses, character names, etc.). Call `search_po_terms` with those terms BEFORE translating.
 3. If a term is found in the tool results, use the provided official translation exactly. If a term is not found in the tool results, translate it sensibly on your own.
-4. Do NOT add any Markdown or other markup to the output: no headings, bold/italics, bullet markers, code blocks, or HTML tags. Keep the output structure as close to the source text as possible - preserve its paragraph breaks, line breaks and indentation exactly as they are.
+4. The input is Markdown when it contains Markdown markers (headings starting with `#`, unordered list items starting with `-`, ordered list items, `**bold**`, `[links](url)`). Translate ONLY the human-readable text and preserve ALL Markdown markers, line breaks, blank lines, list item boundaries and list nesting exactly as given. Do not add, remove, merge or split any Markdown structure.
 5. For EVERY term you identified and queried via `search_po_terms`, append the English original in half-width parentheses right after its translation, e.g. "洞穴蠕虫 (Depths Worm)". This is the only addition allowed beyond a faithful translation.
 6. Output ONLY the final Chinese translation, no extra commentary.
 "#;
 
 fn build_user_prompt(body: &str) -> String {
     format!(
-        "Translate the following Don't Starve Together update notes into Chinese.
+        "Translate the following Don't Starve Together update notes (Markdown) into Chinese.
+Preserve the Markdown structure exactly.
 
 Patch notes:
 {}",
         body
     )
+}
+
+/// Markdown 块结构签名：`(标题行数, 列表项行数)`。用于校验 LLM 译文没有增删
+/// 标题或列表条目（结构被破坏只记 WARN，不阻断发布）。
+fn block_signature(markdown: &str) -> (usize, usize) {
+    let mut headings = 0;
+    let mut items = 0;
+    for line in markdown.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') {
+            headings += 1;
+            continue;
+        }
+        if trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ") {
+            items += 1;
+            continue;
+        }
+        let digits = trimmed.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits > 0 && trimmed[digits..].starts_with(". ") {
+            items += 1;
+        }
+    }
+    (headings, items)
+}
+
+fn warn_on_structure_change(source: &str, translated: &str) {
+    let (source_headings, source_items) = block_signature(source);
+    let (translated_headings, translated_items) = block_signature(translated);
+    if source_headings != translated_headings || source_items != translated_items {
+        tracing::warn!(
+            source_headings,
+            translated_headings,
+            source_items,
+            translated_items,
+            "translated markdown structure differs from source; heading/list layout may be degraded"
+        );
+    }
 }
 
 pub fn create_llm_client(config: &AppConfig) -> Client<OpenAIConfig> {
@@ -245,6 +283,8 @@ pub async fn full_translate(
             )));
         }
 
+        warn_on_structure_change(announcement, &translated_text);
+
         // 调试观察：打印术语检索候选集（即发布消息中 glossary 字段的内容）
         if !search_results_collected.is_empty() {
             match serde_json::to_string_pretty(&search_results_collected) {
@@ -267,6 +307,8 @@ pub async fn full_translate(
                 "LLM responded without tool calls and with empty content".to_string(),
             ));
         }
+
+        warn_on_structure_change(announcement, &translated_text);
 
         Ok(TranslatedAnnouncement {
             original_text: announcement.to_string(),

@@ -1,0 +1,71 @@
+Changes
+ 
+
+
+	
+		Craggy Carapace absorption increased to 95%, and durability to 1050. Durability is also taken when blocking a knockback hit while riding a Beefalo.
+	
+	
+		Reduced Bat Hat’s life steal from 8.5 to 6.8, and slightly reduced the hat replenish when worn.
+	
+	
+		Hound Batilisk will unequip off a player if electrocuted (e.g. WX-78’s Electrification Circuit)
+	
+	
+		Shrouded Queen:
+		
+			
+				Vine counterattack no longer triggers if someone is near her but didn’t attack, while someone far away attacks.
+			
+			
+				Equipment procs no longer trigger for projectiles that are deflected by her barrier.  E.g. Slingshot Ammo, Enlightened Crown, etc.
+			
+			
+				Grim Harriers now start running at a slower speed, and accelerate over time.
+			
+		
+	
+
+
+
+	Bug Fixes
+ 
+
+
+	
+		Fixed a bug where “Charlie” did not show as the cause of death for Maxwell and Winona when killed by Darkness (Skeleton inspection, Chat announce, Obituaries screen)
+		
+			
+				
+			
+		
+	
+	
+		Fixed being able to teleport out of the Shrouded arena in some places.
+	
+	
+		Fixed a case where Damaged Bishops and other clockworks would respawn more times when near the Shrouded arena during a ruins reset.
+	
+	
+		Fixed a case of Charlie going through her lines a little too quickly.
+	
+	
+		Fixed a bug where the Ancient Gateway couldn’t be unsocketed.
+	
+	
+		Fixed a bug where an item taken out of an Icker Storage wouldn’t resume perishing.
+	
+	
+		Fixed a bug where the Beckoning Hand would get stuck and unable to be clicked if teleported away from.
+	
+	
+		Fixed a bug where the Shrouded Queen summon sequence would break and not start the fight.
+	
+	
+		Fixed a bug where the Craggy Carapace’s knockback immunity effect did not work on WX-78’s Possessed Chassis.
+	
+	
+		Fixed a bug with the Bat Hat replenishing itself when worn by Punching Bags and Ickers.
+	
+	
+		Fixed a bug with the Bat Hat’s lifesteal functioning when attacking on a Beefalo.

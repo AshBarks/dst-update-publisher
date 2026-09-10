@@ -1,5 +1,6 @@
 use dst_update_publisher::cli::{CliArgs, RunMode};
 use dst_update_publisher::config::load_config;
+use dst_update_publisher::content::load_source_markdown;
 use dst_update_publisher::error::{AppError, AppResult};
 use dst_update_publisher::failure::{FAILURE_STATE_KEY, handle_failure};
 use dst_update_publisher::json_translator::translate_json_file;
@@ -40,8 +41,9 @@ impl std::error::Error for StageError {
     }
 }
 
-/// 单轮 抓取→去重→版本页→html2text→翻译→canonical 构造→双发→标记。任何阶段失败
-/// 以 StageError 返回（由 process_once 转失败状态机），不向上传播（进程不崩）。
+/// 单轮 抓取→去重→版本页→原帖 HTML→Markdown（失败降级 RSS 描述）→翻译→
+/// canonical 构造→发布→标记。任何阶段失败以 StageError 返回（由 process_once
+/// 转失败状态机），不向上传播（进程不崩）。
 async fn run_pipeline(
     config: &AppConfig,
     po_index: &PoFileIndex,
@@ -98,22 +100,20 @@ async fn run_pipeline(
         page_entry.is_hotfix
     );
 
-    let announcement_text = html2text::from_read(rss_item.description_html.as_bytes(), 80)
-        .map_err(|e| {
-            StageError::at(
-                "html2text",
-                AppError::HtmlParse(format!("failed to convert HTML to text: {}", e)),
-            )
-        })?;
+    let (markdown_source, source_kind) =
+        load_source_markdown(&rss_item.link, &rss_item.description_text)
+            .await
+            .map_err(|e| StageError::at("post_markdown", e))?;
 
     tracing::info!(
-        "announcement text length: {} chars",
-        announcement_text.len()
+        source = source_kind.as_str(),
+        "update body markdown: {} chars",
+        markdown_source.chars().count()
     );
 
     let llm_client = create_llm_client(config);
 
-    let translated = full_translate(&llm_client, config, &announcement_text, po_index)
+    let translated = full_translate(&llm_client, config, &markdown_source, po_index)
         .await
         .map_err(|e| StageError::at("translate", e))?;
 
@@ -124,7 +124,7 @@ async fn run_pipeline(
         translated.translated_text.len()
     );
 
-    let canonical = build_canonical(rss_item, &page_entry, &announcement_text, &translated)
+    let canonical = build_canonical(rss_item, &page_entry, &translated)
         .map_err(|e| StageError::at("build_canonical", e))?;
 
     // 旧格式（UpdateNotification → dst:update/dst-updates）已于 Phase 3 停发：

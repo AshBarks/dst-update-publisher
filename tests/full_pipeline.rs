@@ -66,8 +66,8 @@ async fn full_pipeline_rss_to_canonical() {
         .expect("get_version_info failed");
 
     let translated = make_translated_announcement();
-    let canonical = build_canonical(latest, &page_entry, "raw cleaned text", &translated)
-        .expect("build_canonical failed");
+    let canonical =
+        build_canonical(latest, &page_entry, &translated).expect("build_canonical failed");
     assert_eq!(
         canonical.dedup_key,
         format!("klei-dst-rss:{}", latest.build_number)
