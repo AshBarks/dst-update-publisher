@@ -1,16 +1,18 @@
 use async_openai::{
     Client,
     config::OpenAIConfig,
+    error::OpenAIError,
     types::chat::{
         ChatCompletionMessageToolCall, ChatCompletionMessageToolCalls,
         ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
         ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs,
         ChatCompletionRequestToolMessageContent, ChatCompletionRequestUserMessageArgs,
-        ChatCompletionTool, ChatCompletionTools, CreateChatCompletionRequestArgs,
-        FunctionObjectArgs,
+        ChatCompletionTool, ChatCompletionTools, CreateChatCompletionRequest,
+        CreateChatCompletionRequestArgs, CreateChatCompletionResponse, FunctionObjectArgs,
     },
 };
 use serde_json::json;
+use std::time::Duration;
 
 use crate::error::{AppError, AppResult};
 use crate::models::{AppConfig, PoSearchResult, TranslatedAnnouncement};
@@ -90,6 +92,69 @@ pub fn create_llm_client(config: &AppConfig) -> Client<OpenAIConfig> {
     Client::with_config(openai_config)
 }
 
+/// 单次 LLM 请求的超时与重试。
+///
+/// 模型网关偶发挂死（实测 Qwen3.5-4B 首轮 7 分钟无响应），没有超时会把整条
+/// 管线拖到失败状态机都触发不了。这里对每次请求做 `timeout`，只对可重试错误
+/// （超时/连接错误/408/409/425/429/5xx）做指数退避重试；参数错误等直接失败。
+async fn create_chat_with_retry<F>(
+    client: &Client<OpenAIConfig>,
+    mut build_request: F,
+    timeout: Duration,
+    max_retries: u32,
+    backoff: Duration,
+) -> AppResult<CreateChatCompletionResponse>
+where
+    F: FnMut() -> AppResult<CreateChatCompletionRequest>,
+{
+    let mut attempt = 0u32;
+    loop {
+        let request = build_request()?;
+        let failure: String =
+            match tokio::time::timeout(timeout, client.chat().create(request)).await {
+                Ok(Ok(response)) => return Ok(response),
+                Ok(Err(error)) => {
+                    if !is_retryable_llm_error(&error) {
+                        return Err(AppError::LlmApi(format!("LLM API call failed: {error}")));
+                    }
+                    error.to_string()
+                }
+                Err(_) => format!("request timed out after {}s", timeout.as_secs()),
+            };
+
+        if attempt >= max_retries {
+            return Err(AppError::LlmApi(format!(
+                "LLM API call failed after {} attempts: {failure}",
+                attempt + 1
+            )));
+        }
+
+        attempt += 1;
+        let delay = backoff.saturating_mul(2u32.pow((attempt - 1).min(5)));
+        tracing::warn!(
+            attempt,
+            max_retries,
+            delay_ms = delay.as_millis() as u64,
+            error = %failure,
+            "LLM request failed; retrying"
+        );
+        tokio::time::sleep(delay).await;
+    }
+}
+
+/// 只重试瞬时错误；鉴权/参数错误重试没有意义。
+fn is_retryable_llm_error(error: &OpenAIError) -> bool {
+    match error {
+        OpenAIError::Reqwest(_) | OpenAIError::StreamError(_) => true,
+        OpenAIError::ApiError(response) => is_retryable_status(response.status_code.as_u16()),
+        _ => false,
+    }
+}
+
+fn is_retryable_status(status: u16) -> bool {
+    matches!(status, 408 | 409 | 425 | 429) || status >= 500
+}
+
 fn build_tools() -> AppResult<Vec<ChatCompletionTools>> {
     let tool = ChatCompletionTool {
         function: FunctionObjectArgs::default()
@@ -164,19 +229,22 @@ pub async fn full_translate(
 
     tracing::info!("calling LLM with search_po_terms tool to extract terms");
 
-    let first_response = client
-        .chat()
-        .create(
+    let first_response = create_chat_with_retry(
+        client,
+        || {
             CreateChatCompletionRequestArgs::default()
                 .model(&config.llm_model)
                 .temperature(config.llm_temperature)
                 .messages(messages.clone())
                 .tools(tools.clone())
                 .build()
-                .map_err(|e| AppError::LlmApi(format!("failed to build request: {}", e)))?,
-        )
-        .await
-        .map_err(|e| AppError::LlmApi(format!("LLM API call failed: {}", e)))?;
+                .map_err(|e| AppError::LlmApi(format!("failed to build request: {}", e)))
+        },
+        Duration::from_secs(config.llm_request_timeout_secs),
+        config.llm_max_retries,
+        Duration::from_millis(config.llm_retry_backoff_ms),
+    )
+    .await?;
 
     let first_choice = first_response
         .choices
@@ -251,18 +319,21 @@ pub async fn full_translate(
         let mut finish_note = String::new();
 
         for attempt in 1..=3 {
-            let second_response = client
-                .chat()
-                .create(
+            let second_response = create_chat_with_retry(
+                client,
+                || {
                     CreateChatCompletionRequestArgs::default()
                         .model(&config.llm_model)
                         .temperature(config.llm_temperature)
                         .messages(messages.clone())
                         .build()
-                        .map_err(|e| AppError::LlmApi(format!("failed to build request: {}", e)))?,
-                )
-                .await
-                .map_err(|e| AppError::LlmApi(format!("LLM API call failed: {}", e)))?;
+                        .map_err(|e| AppError::LlmApi(format!("failed to build request: {}", e)))
+                },
+                Duration::from_secs(config.llm_request_timeout_secs),
+                config.llm_max_retries,
+                Duration::from_millis(config.llm_retry_backoff_ms),
+            )
+            .await?;
 
             let second_choice =
                 second_response
@@ -361,4 +432,131 @@ fn finalize_translation(
     }
 
     cleaned
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn classifies_retryable_statuses() {
+        for status in [408, 409, 425, 429, 500, 502, 503, 504] {
+            assert!(is_retryable_status(status), "{status} should be retryable");
+        }
+        for status in [400, 401, 403, 404, 422] {
+            assert!(
+                !is_retryable_status(status),
+                "{status} should not be retryable"
+            );
+        }
+    }
+
+    /// 第一次 500、第二次 200：验证退避重试后成功，且确实发了两次请求。
+    #[tokio::test]
+    async fn retries_transient_error_then_succeeds() {
+        let mut server = mockito::Server::new_async().await;
+        let base_url = format!("{}/v1", server.url());
+
+        let failure = server
+            .mock("POST", "/v1/chat/completions")
+            .with_status(500)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"error":{"message":"boom","type":"server_error"}}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let success = server
+            .mock("POST", "/v1/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"id":"x","object":"chat.completion","created":0,"model":"test","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}"#,
+            )
+            .expect(1)
+            .create_async()
+            .await;
+
+        let client = Client::with_config(
+            OpenAIConfig::new()
+                .with_api_base(base_url)
+                .with_api_key("test-key"),
+        );
+
+        let response = create_chat_with_retry(
+            &client,
+            || {
+                CreateChatCompletionRequestArgs::default()
+                    .model("test")
+                    .messages(vec![
+                        ChatCompletionRequestUserMessageArgs::default()
+                            .content("hi")
+                            .build()
+                            .unwrap()
+                            .into(),
+                    ])
+                    .build()
+                    .map_err(|e| AppError::LlmApi(e.to_string()))
+            },
+            Duration::from_secs(5),
+            2,
+            Duration::from_millis(10),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.choices[0].message.content.as_deref(), Some("ok"));
+        failure.assert_async().await;
+        success.assert_async().await;
+    }
+
+    /// 服务端只接受连接不响应：超时必须生效并返回错误，而不是挂死。
+    #[tokio::test]
+    async fn times_out_when_server_never_responds() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+
+        let client = Client::with_config(
+            OpenAIConfig::new()
+                .with_api_base(format!("http://{addr}/v1"))
+                .with_api_key("test-key"),
+        );
+
+        let started = std::time::Instant::now();
+        let error = create_chat_with_retry(
+            &client,
+            || {
+                CreateChatCompletionRequestArgs::default()
+                    .model("test")
+                    .messages(vec![
+                        ChatCompletionRequestUserMessageArgs::default()
+                            .content("hi")
+                            .build()
+                            .unwrap()
+                            .into(),
+                    ])
+                    .build()
+                    .map_err(|e| AppError::LlmApi(e.to_string()))
+            },
+            Duration::from_millis(200),
+            0,
+            Duration::from_millis(10),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            error.to_string().contains("timed out"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "timeout did not cancel the request in time"
+        );
+    }
 }

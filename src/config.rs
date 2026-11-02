@@ -70,6 +70,22 @@ pub fn load_config() -> Result<AppConfig, AppError> {
         .and_then(|v| v.parse::<f32>().ok())
         .unwrap_or(0.3);
 
+    let llm_request_timeout_secs = std::env::var("LLM_REQUEST_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(180);
+
+    let llm_max_retries = std::env::var("LLM_MAX_RETRIES")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(1);
+
+    let llm_retry_backoff_ms = std::env::var("LLM_RETRY_BACKOFF_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(3000);
+
     let po_zip_path = std::env::var("PO_ZIP_PATH")
         .map_err(|_| AppError::Config("PO_ZIP_PATH is required".to_string()))?;
 
@@ -99,6 +115,9 @@ pub fn load_config() -> Result<AppConfig, AppError> {
         llm_api_key,
         llm_model,
         llm_temperature,
+        llm_request_timeout_secs,
+        llm_max_retries,
+        llm_retry_backoff_ms,
         po_zip_path,
         po_zip_po_files,
     })

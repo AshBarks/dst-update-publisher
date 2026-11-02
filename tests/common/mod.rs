@@ -22,6 +22,9 @@ pub fn make_config(mock_rss_url: &str, mock_page_url: &str) -> AppConfig {
         llm_api_key: "test-key".into(),
         llm_model: "test-model".into(),
         llm_temperature: 0.3,
+        llm_request_timeout_secs: 180,
+        llm_max_retries: 1,
+        llm_retry_backoff_ms: 3000,
         po_zip_path: String::new(),
         po_zip_po_files: vec![],
     }
@@ -47,6 +50,9 @@ pub fn make_config_with_redis(
         llm_api_key: "test-key".into(),
         llm_model: "test-model".into(),
         llm_temperature: 0.3,
+        llm_request_timeout_secs: 180,
+        llm_max_retries: 1,
+        llm_retry_backoff_ms: 3000,
         po_zip_path: String::new(),
         po_zip_po_files: vec![],
     }

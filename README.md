@@ -40,6 +40,10 @@ cp .env.example .env
 | `LLM_API_BASE`     | 是   | LLM API 基础 URL               | -                        |
 | `LLM_API_KEY`      | 是   | LLM API 密钥                   | -                        |
 | `LLM_MODEL`        | 否   | 使用的模型名称                 | `gpt-4o`                 |
+| `LLM_TEMPERATURE`  | 否   | 采样温度                       | `0.3`                    |
+| `LLM_REQUEST_TIMEOUT_SECS` | 否 | 单次 LLM 请求超时（秒）    | `180`                    |
+| `LLM_MAX_RETRIES`  | 否   | 可重试错误的次数（超时/429/5xx） | `1`                    |
+| `LLM_RETRY_BACKOFF_MS` | 否 | 首次重试退避（毫秒，指数递增） | `3000`                 |
 | `PO_ZIP_PATH`      | 是   | 游戏本地化 ZIP 文件路径        | -                        |
 | `PO_ZIP_PO_FILES`  | 是   | ZIP 中 PO 文件路径（逗号分隔） | -                        |
 

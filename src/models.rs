@@ -232,6 +232,9 @@ pub struct AppConfig {
     pub llm_api_key: String,
     pub llm_model: String,
     pub llm_temperature: f32,
+    pub llm_request_timeout_secs: u64,
+    pub llm_max_retries: u32,
+    pub llm_retry_backoff_ms: u64,
     pub po_zip_path: String,
     pub po_zip_po_files: Vec<String>,
 }
