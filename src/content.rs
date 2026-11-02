@@ -115,7 +115,7 @@ pub fn html_to_markdown(html: &str) -> AppResult<String> {
 
     let mut converter = Converter { out: String::new() };
     converter.render_children(section, 0);
-    let markdown = normalize_markdown(&converter.out);
+    let markdown = decode_html_entities(&normalize_markdown(&converter.out));
     if markdown.is_empty() {
         return Err(AppError::HtmlParse(
             "rich-text section produced empty markdown".to_string(),
@@ -124,12 +124,32 @@ pub fn html_to_markdown(html: &str) -> AppResult<String> {
     Ok(markdown)
 }
 
+/// 解码正文里残留的 HTML 实体并把不换行空格归一为普通空格。
+///
+/// RSS `<description>` 是论坛导出的纯文本，`&nbsp;` 会原样保留；原帖 HTML
+/// 也可能带实体。翻译前统一清掉，避免实体进入译文与 `body_text`。
+pub fn decode_html_entities(text: &str) -> String {
+    text.replace("&nbsp;", " ")
+        .replace("&#160;", " ")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&quot;", "\"")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+        .replace('\u{00A0}', " ")
+}
+
 /// RSS `<description>` 纯文本 → Markdown（缩进启发式，仅在原帖不可用时使用）。
 ///
 /// 规则：以句末标点或长文本判定"明确条目"，取这些条目缩进深度的众数作为列表
 /// 单位；深度低于单位或非单位整数倍、且短且无句末标点的行视为节标题，其余按
 /// 缩进层级输出 `-` 列表。无缩进的旧格式直接按空行分段返回。
 pub fn description_to_markdown(description: &str) -> String {
+    decode_html_entities(&description_to_markdown_inner(description))
+}
+
+fn description_to_markdown_inner(description: &str) -> String {
     let mut lines: Vec<(usize, String)> = Vec::new();
     for raw in description.lines() {
         if raw.trim().is_empty() {
@@ -215,6 +235,7 @@ fn join_blocks(blocks: &[String]) -> String {
 
 /// 把 Markdown 转为纯文本（去掉标题/列表/强调/链接标记），供 `body_text` 使用。
 pub fn markdown_to_plain(markdown: &str) -> String {
+    let markdown = decode_html_entities(markdown);
     let mut out = String::new();
     let mut in_code_fence = false;
     for line in markdown.lines() {
@@ -809,5 +830,18 @@ mod tests {
             markdown_to_plain("纯文本，没有标记。"),
             "纯文本，没有标记。"
         );
+    }
+
+    #[test]
+    fn decodes_html_entities() {
+        assert_eq!(decode_html_entities("a&nbsp;b &amp; c"), "a b & c");
+        assert_eq!(decode_html_entities("x\u{00A0}y"), "x y");
+    }
+
+    #[test]
+    fn description_markdown_has_no_entities() {
+        let markdown = description_to_markdown("The&nbsp;Rosebloom Vest is here!");
+        assert!(!markdown.contains("&nbsp;"));
+        assert!(markdown.contains("The Rosebloom Vest is here!"));
     }
 }
