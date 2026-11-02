@@ -252,6 +252,7 @@ dependencies = [
 [[package]]
 name = "canonical-msg"
 version = "0.1.0"
+source = "git+https://github.com/NullOnSpace/canonical-msg.git?branch=main#c61d8609448ba1d0f5fce6d70d0ab69b27b584be"
 dependencies = [
  "pbjson",
  "pbjson-build",
