@@ -9,8 +9,8 @@
 - **RSS 监控**：从 Klei 官方论坛 RSS 源获取 DST PC 版更新公告，自动筛选 PC 平台条目
 - **版本信息抓取**：解析官方更新页面 HTML，获取 build number、revision、发布通道（release/beta）及是否为 hotfix
 - **正文结构化**：抓取 RSS 条目对应的论坛原帖 HTML，把公告正文转为 Markdown（二级标题、无序列表、嵌套层级、链接），LLM 按结构翻译；原帖不可用时回退 RSS 描述的缩进层级恢复结构
-- **PO 术语查询**：从游戏本地化 ZIP 包中加载 PO 文件，建立术语索引，供 LLM 翻译时查询专有术语的官方译名
-- **LLM 翻译**：通过 OpenAI 兼容 API 调用大语言模型，使用 Function Calling（`search_po_terms` 工具）实现术语辅助翻译
+- **PO 术语查询**：从游戏本地化 ZIP 包中加载 PO 文件，建立术语索引；翻译前按正文确定性提取官方术语表（英文 → 中文）注入提示词，模型仍可对表外术语调用 `search_po_terms` 工具
+- **LLM 翻译**：通过 OpenAI 兼容 API 调用大语言模型，输出纯简体中文（不夹英文括注）；译后清理术语括注与 HTML 实体，并对未命中的官方术语记 WARN
 - **Redis 推送**：将 canonical 消息（push.v1 protobuf）XADD 到 Redis Stream（`stream:msgs:in`，`data` field 承载 proto bytes）
 - **canonical 发布**：更新与失败告警统一走 canonical（push.v1）消息，XADD 到 `REDIS_MSGS_STREAM`（默认 `stream:msgs:in`）
 - **失败状态机**：链上任意阶段失败时发布 `kind=ALERT` 的 canonical 告警；连续 N 次或距首次失败超 24h 自动升级（tag `alert:escalated`），成功发布后隐式恢复
@@ -193,10 +193,11 @@ cargo run --release --example sub_dump -- --stream stream:msgs:in
 4. 抓取原帖 HTML 并转为 Markdown（示例：`## Changes` / `- 条目` / 嵌套
    `  - 子项`）；原帖失败则按 RSS 描述缩进恢复结构
           ↓
-5. 调用 LLM 翻译（标准 Function Calling 流程，保留 Markdown 结构）：
-   a. LLM 通过 search_po_terms 工具提取并查询术语
-   b. 将工具调用结果以 tool message 归还
-   c. LLM 在同一上下文中生成最终译文
+5. 提取术语表并调用 LLM 翻译（保留 Markdown 结构，输出纯中文）：
+   a. 按正文 token 生成 1~5 词 n-gram，最长优先匹配 PO msgid，得到官方术语表
+   b. 术语表随 user prompt 注入；LLM 可对表外术语调用 search_po_terms
+   c. 工具结果以 tool message 归还，LLM 在同一上下文生成最终译文
+   d. 译后删除术语英文括注、清理 HTML 实体，并对未命中的官方术语记 WARN
           ↓
 6. 构造 canonical（build_canonical）：body_markdown = 结构化中文译文，
    body_text = 去 Markdown 的纯文本，original_description = 英文原文留档

@@ -3,6 +3,7 @@ pub mod config;
 pub mod content;
 pub mod error;
 pub mod failure;
+pub mod glossary;
 pub mod json_translator;
 pub mod models;
 pub mod po_search;

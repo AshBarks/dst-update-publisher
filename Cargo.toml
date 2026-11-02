@@ -26,6 +26,7 @@ clap = { version = "4", features = ["derive"] }
 futures = "0.3"
 canonical-msg = { git = "https://github.com/NullOnSpace/canonical-msg.git", branch = "main" }
 ulid = "3"
+regex = "1"
 
 [dev-dependencies]
 mockito = "1"

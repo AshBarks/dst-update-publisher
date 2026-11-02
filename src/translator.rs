@@ -22,22 +22,27 @@ Your job is to translate English update patch notes into Simplified Chinese.
 
 Guidelines:
 1. Translation must be accurate, fluent, and match the tone of game announcements.
-2. First, extract from the patch notes any words or phrases you think are game terms (items, skills, statuses, character names, etc.). Call `search_po_terms` with those terms BEFORE translating.
-3. If a term is found in the tool results, use the provided official translation exactly. If a term is not found in the tool results, translate it sensibly on your own.
+2. An official glossary is provided in the user message. For every term listed there, use the given Chinese translation EXACTLY as provided: do not translate it yourself, do not alter any character, and do not append the English original or any parenthetical gloss. Every glossary term that occurs in the source MUST appear verbatim in your translation — omitting one is a translation error.
+3. You may call `search_po_terms` for game terms that are NOT covered by the glossary, BEFORE translating them. If a tool result gives an official translation, use it exactly.
 4. The input is Markdown when it contains Markdown markers (headings starting with `#`, unordered list items starting with `-`, ordered list items, `**bold**`, `[links](url)`). Translate ONLY the human-readable text and preserve ALL Markdown markers, line breaks, blank lines, list item boundaries and list nesting exactly as given. Do not add, remove, merge or split any Markdown structure.
-5. For EVERY term you identified and queried via `search_po_terms`, append the English original in half-width parentheses right after its translation, e.g. "洞穴蠕虫 (Depths Worm)". This is the only addition allowed beyond a faithful translation.
+5. Output Simplified Chinese only. Do NOT keep English words or add English in parentheses. Exceptions only: URLs, version numbers (e.g. 3.0), prices, and brand names with no accepted Chinese form (e.g. Twitch).
 6. Output ONLY the final Chinese translation, no extra commentary.
 "#;
 
-fn build_user_prompt(body: &str) -> String {
-    format!(
+fn build_user_prompt(body: &str, glossary_block: &str) -> String {
+    let mut prompt = String::from(
         "Translate the following Don't Starve Together update notes (Markdown) into Chinese.
 Preserve the Markdown structure exactly.
 
-Patch notes:
-{}",
-        body
-    )
+",
+    );
+    if !glossary_block.is_empty() {
+        prompt.push_str(glossary_block);
+        prompt.push('\n');
+    }
+    prompt.push_str("Patch notes:\n");
+    prompt.push_str(body);
+    prompt
 }
 
 /// Markdown 块结构签名：`(标题行数, 列表项行数)`。用于校验 LLM 译文没有增删
@@ -135,6 +140,15 @@ pub async fn full_translate(
 ) -> AppResult<TranslatedAnnouncement> {
     let tools = build_tools()?;
 
+    // 译前确定性地从源文提取官方术语，避免模型“只查自己想查的词”。
+    let glossary = crate::glossary::collect(announcement, po_index);
+    let glossary_block = crate::glossary::prompt_block(&glossary);
+    tracing::info!(
+        terms = glossary.len(),
+        prompt_chars = glossary_block.len(),
+        "extracted glossary terms from source"
+    );
+
     let mut messages: Vec<ChatCompletionRequestMessage> = vec![
         ChatCompletionRequestSystemMessageArgs::default()
             .content(SYSTEM_PROMPT)
@@ -142,7 +156,7 @@ pub async fn full_translate(
             .map_err(|e| AppError::LlmApi(format!("failed to build system message: {}", e)))?
             .into(),
         ChatCompletionRequestUserMessageArgs::default()
-            .content(build_user_prompt(announcement))
+            .content(build_user_prompt(announcement, &glossary_block))
             .build()
             .map_err(|e| AppError::LlmApi(format!("failed to build user message: {}", e)))?
             .into(),
@@ -283,13 +297,13 @@ pub async fn full_translate(
             )));
         }
 
-        warn_on_structure_change(announcement, &translated_text);
+        let translated_text = finalize_translation(translated_text, announcement, &glossary);
 
-        // 调试观察：打印术语检索候选集（即发布消息中 glossary 字段的内容）
+        // 调试观察：打印术语检索候选集（模型主动查询的结果，非术语表）
         if !search_results_collected.is_empty() {
             match serde_json::to_string_pretty(&search_results_collected) {
-                Ok(pretty) => tracing::debug!("glossary preview:\n{}", pretty),
-                Err(e) => tracing::debug!("failed to serialize glossary preview: {}", e),
+                Ok(pretty) => tracing::debug!("search results preview:\n{}", pretty),
+                Err(e) => tracing::debug!("failed to serialize search results preview: {}", e),
             }
         }
 
@@ -308,7 +322,7 @@ pub async fn full_translate(
             ));
         }
 
-        warn_on_structure_change(announcement, &translated_text);
+        let translated_text = finalize_translation(translated_text, announcement, &glossary);
 
         Ok(TranslatedAnnouncement {
             original_text: announcement.to_string(),
@@ -316,4 +330,35 @@ pub async fn full_translate(
             search_results: search_results_collected,
         })
     }
+}
+
+/// 译文收尾：删术语表英文括注、清 HTML 实体、结构校验、术语缺失告警。
+fn finalize_translation(
+    translated: String,
+    announcement: &str,
+    glossary: &[crate::glossary::GlossaryEntry],
+) -> String {
+    let cleaned = crate::glossary::strip_glossary_glosses(&translated, glossary);
+    let cleaned = crate::content::decode_html_entities(&cleaned);
+    // 极端情况下括注清理可能把整段清空，此时保留原译文交给上层报错/发布。
+    let cleaned = if cleaned.trim().is_empty() {
+        translated
+    } else {
+        cleaned
+    };
+
+    warn_on_structure_change(announcement, &cleaned);
+
+    let missing = crate::glossary::missing_terms(&cleaned, glossary);
+    if !missing.is_empty() {
+        let preview: Vec<&str> = missing.iter().take(20).copied().collect();
+        tracing::warn!(
+            missing_count = missing.len(),
+            glossary_total = glossary.len(),
+            terms = ?preview,
+            "translated text is missing official glossary terms"
+        );
+    }
+
+    cleaned
 }

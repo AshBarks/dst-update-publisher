@@ -9,6 +9,10 @@ pub struct PoFileIndex {
     entries: Vec<PoIndexEntry>,
     exact_map: HashMap<String, Vec<usize>>,
     word_index: HashMap<String, Vec<usize>>,
+    /// 规范化（小写、空白折叠）msgid → 条目下标，供术语表精确查表。
+    msgid_map: HashMap<String, Vec<usize>>,
+    /// 小写词 → 出现在多少个多词 msgid 中，用于过滤 Chest/Shadow 这类通用名词。
+    multiword_word_counts: HashMap<String, usize>,
 }
 
 #[derive(Clone)]
@@ -165,6 +169,8 @@ pub fn build_index_from_po_contents(po_contents: &[String]) -> AppResult<PoFileI
     let mut all_entries: Vec<PoIndexEntry> = Vec::new();
     let mut exact_map: HashMap<String, Vec<usize>> = HashMap::new();
     let mut word_index: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut msgid_map: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut multiword_word_counts: HashMap<String, usize> = HashMap::new();
 
     for content in po_contents {
         let catalog = polib::po_file::parse_from_reader(content.as_bytes())
@@ -213,6 +219,21 @@ pub fn build_index_from_po_contents(po_contents: &[String]) -> AppResult<PoFileI
                 word_index.entry(word).or_default().push(idx);
             }
 
+            let normalized_msgid = normalize_msgid(&msgid);
+            msgid_map
+                .entry(normalized_msgid.clone())
+                .or_default()
+                .push(idx);
+
+            if normalized_msgid.split_whitespace().count() > 1 {
+                let mut counted = HashSet::new();
+                for word in content_words(&normalized_msgid) {
+                    if counted.insert(word.clone()) {
+                        *multiword_word_counts.entry(word).or_default() += 1;
+                    }
+                }
+            }
+
             all_entries.push(PoIndexEntry {
                 msgid,
                 msgid_lower,
@@ -232,10 +253,69 @@ pub fn build_index_from_po_contents(po_contents: &[String]) -> AppResult<PoFileI
         entries: all_entries,
         exact_map,
         word_index,
+        msgid_map,
+        multiword_word_counts,
     })
 }
 
+/// 规范化 msgid：小写 + 空白折叠，作为术语表精确查表的键。
+fn normalize_msgid(msgid: &str) -> String {
+    msgid
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// 用于统计通用词频的词元：按非字母数字（保留撇号/连字符）切分，去掉所有格。
+fn content_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !(c.is_alphanumeric() || c == '\'' || c == '-'))
+        .filter(|w| w.len() >= 3)
+        .map(|w| {
+            w.trim_matches('\'')
+                .trim_end_matches("'s")
+                .trim_end_matches("’s")
+                .to_lowercase()
+        })
+        .filter(|w| w.len() >= 3)
+        .collect()
+}
+
 impl PoFileIndex {
+    /// 精确查 msgid（大小写不敏感、空白折叠），返回出现次数最多的条目
+    /// `(msgid, msgstr)`。同一 msgid 在 PO 中可能有多条不同译法（如 Close
+    /// 关闭/合上），取众数、并列时按 PO 顺序取先出现者，保证确定性。
+    pub fn lookup_msgid_entry(&self, msgid: &str) -> Option<(&str, &str)> {
+        let key = normalize_msgid(msgid);
+        let indices = self.msgid_map.get(&key)?;
+        let mut counts: HashMap<&str, usize> = HashMap::new();
+        for &idx in indices {
+            *counts.entry(self.entries[idx].msgstr.as_str()).or_default() += 1;
+        }
+        let mut best: Option<(&str, &str, usize)> = None;
+        for &idx in indices {
+            let entry = &self.entries[idx];
+            let count = counts[entry.msgstr.as_str()];
+            if best.is_none_or(|(_, _, best_count)| count > best_count) {
+                best = Some((entry.msgid.as_str(), entry.msgstr.as_str(), count));
+            }
+        }
+        best.map(|(msgid, msgstr, _)| (msgid, msgstr))
+    }
+
+    /// 精确查 msgid 的译法（只取译文）。
+    pub fn lookup_msgid(&self, msgid: &str) -> Option<&str> {
+        self.lookup_msgid_entry(msgid).map(|(_, msgstr)| msgstr)
+    }
+
+    /// 该词出现在多少个多词 msgid 中（用于区分专名与通用名词）。
+    pub fn multiword_word_count(&self, word: &str) -> usize {
+        self.multiword_word_counts
+            .get(&word.to_lowercase())
+            .copied()
+            .unwrap_or(0)
+    }
+
     pub fn search_terms(&self, terms: &[&str]) -> Vec<PoSearchResult> {
         terms
             .iter()
