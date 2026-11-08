@@ -238,6 +238,9 @@ pub struct AppConfig {
     /// Qwen3 等混合推理模型：true 时在 system prompt 末尾追加 `/no_think` 软开关，
     /// 关闭思考链，避免长公告翻译被推理 token 拖慢并触发供应商 TPM 限流。
     pub llm_no_think: bool,
+    /// true 时第一轮请求强制 `tool_choice=required`，确保模型先查官方术语再翻译。
+    /// 部分模型（Qwen2.5/3.5）在长文上会跳过工具调用，导致术语被自由发挥。
+    pub llm_force_tool_call: bool,
     pub po_zip_path: String,
     pub po_zip_po_files: Vec<String>,
 }

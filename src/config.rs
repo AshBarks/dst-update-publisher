@@ -95,6 +95,15 @@ pub fn load_config() -> Result<AppConfig, AppError> {
         })
         .unwrap_or(false);
 
+    let llm_force_tool_call = std::env::var("LLM_FORCE_TOOL_CALL")
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false);
+
     let po_zip_path = std::env::var("PO_ZIP_PATH")
         .map_err(|_| AppError::Config("PO_ZIP_PATH is required".to_string()))?;
 
@@ -128,6 +137,7 @@ pub fn load_config() -> Result<AppConfig, AppError> {
         llm_max_retries,
         llm_retry_backoff_ms,
         llm_no_think,
+        llm_force_tool_call,
         po_zip_path,
         po_zip_po_files,
     })

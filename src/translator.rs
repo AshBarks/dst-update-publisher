@@ -7,8 +7,9 @@ use async_openai::{
         ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
         ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs,
         ChatCompletionRequestToolMessageContent, ChatCompletionRequestUserMessageArgs,
-        ChatCompletionTool, ChatCompletionTools, CreateChatCompletionRequest,
-        CreateChatCompletionRequestArgs, CreateChatCompletionResponse, FunctionObjectArgs,
+        ChatCompletionTool, ChatCompletionToolChoiceOption, ChatCompletionTools,
+        CreateChatCompletionRequest, CreateChatCompletionRequestArgs, CreateChatCompletionResponse,
+        FunctionObjectArgs, ToolChoiceOptions,
     },
 };
 use serde_json::json;
@@ -240,11 +241,18 @@ pub async fn full_translate(
     let first_response = create_chat_with_retry(
         client,
         || {
-            CreateChatCompletionRequestArgs::default()
+            let mut request = CreateChatCompletionRequestArgs::default();
+            request
                 .model(&config.llm_model)
                 .temperature(config.llm_temperature)
                 .messages(messages.clone())
-                .tools(tools.clone())
+                .tools(tools.clone());
+            if config.llm_force_tool_call {
+                request.tool_choice(ChatCompletionToolChoiceOption::Mode(
+                    ToolChoiceOptions::Required,
+                ));
+            }
+            request
                 .build()
                 .map_err(|e| AppError::LlmApi(format!("failed to build request: {}", e)))
         },
