@@ -164,6 +164,23 @@ fn lookup(phrase: &str, words: usize, index: &PoFileIndex) -> Option<(String, St
             }
         }
     }
+    // 复数：PO 常以单数收录（Clockwork Rooks → Clockwork Rook），
+    // 只在去复数后的词确实存在于 PO 时才回退，避免造词。
+    if let Some(stripped) = phrase.strip_suffix("ies")
+        && let Some((term, translation)) = index.lookup_msgid_entry(&format!("{stripped}y"))
+    {
+        return Some((term.to_string(), translation.to_string()));
+    }
+    if let Some(stripped) = phrase.strip_suffix("es")
+        && let Some((term, translation)) = index.lookup_msgid_entry(stripped)
+    {
+        return Some((term.to_string(), translation.to_string()));
+    }
+    if let Some(stripped) = phrase.strip_suffix('s')
+        && let Some((term, translation)) = index.lookup_msgid_entry(stripped)
+    {
+        return Some((term.to_string(), translation.to_string()));
+    }
     None
 }
 
@@ -338,5 +355,26 @@ mod tests {
         let entries = vec![entry("Varg", "座狼"), entry("Moleworm", "鼹鼠")];
         let missing = missing_terms("座狼出现了。", &entries);
         assert_eq!(missing, vec!["Moleworm"]);
+    }
+
+    #[test]
+    fn collect_matches_plural_source_against_singular_po_entry() {
+        use crate::po_search::build_index_from_po_contents;
+
+        let po = "msgid \"\"\n\
+                  msgstr \"\"\n\
+                  \"Content-Type: text/plain; charset=UTF-8\\n\"\n\
+                  \"Content-Transfer-Encoding: 8bit\\n\"\n\n\
+                  msgid \"Clockwork Rook\"\nmsgstr \"发条战车\"\n\n\
+                  msgid \"Beefalo\"\nmsgstr \"皮弗娄牛\"\n";
+        let index = build_index_from_po_contents(&[po.to_string()]).unwrap();
+        let entries = collect("Clockwork Rooks and Beefalo", &index);
+
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.term == "Clockwork Rook" && e.translation == "发条战车"),
+            "plural source should fall back to the singular PO msgid: {entries:?}"
+        );
     }
 }
