@@ -23,6 +23,10 @@ const MAX_TERM_WORDS: usize = 5;
 /// 判定“通用名词”的词频阈值：出现在超过该数量多词 msgid 中的单词不算专名。
 const SINGLE_WORD_FREQ_LIMIT: usize = 20;
 
+/// 核心单词术语白名单：即使命中通用词频阈值也要注入（例如 Beefalo 出现在
+/// 大量 UI 句子里，但它是公告中最常见的生物名，漏译会直接露出英文）。
+const ALWAYS_INCLUDE_SINGLE_WORDS: &[&str] = &["beefalo"];
+
 /// 通用名词黑名单：PO 里首字母大写但并非专名，注入术语表只会造成噪声。
 const GENERIC_SINGLE_WORDS: &[&str] = &[
     "caves",
@@ -217,6 +221,10 @@ fn keep(term: &str, source_first_token: &str, index: &PoFileIndex) -> bool {
     {
         return false;
     }
+    // 核心生物/物品名优先于通用词频阈值与黑名单。
+    if ALWAYS_INCLUDE_SINGLE_WORDS.contains(&lower.as_str()) {
+        return true;
+    }
     if GENERIC_SINGLE_WORDS.contains(&lower.as_str()) {
         return false;
     }
@@ -375,6 +383,12 @@ mod tests {
                 .iter()
                 .any(|e| e.term == "Clockwork Rook" && e.translation == "发条战车"),
             "plural source should fall back to the singular PO msgid: {entries:?}"
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.term == "Beefalo" && e.translation == "皮弗娄牛"),
+            "core single-word term should bypass the generic frequency limit: {entries:?}"
         );
     }
 }
