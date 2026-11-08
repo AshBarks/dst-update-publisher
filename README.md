@@ -44,6 +44,7 @@ cp .env.example .env
 | `LLM_REQUEST_TIMEOUT_SECS` | 否 | 单次 LLM 请求超时（秒）    | `180`                    |
 | `LLM_MAX_RETRIES`  | 否   | 可重试错误的次数（超时/429/5xx） | `1`                    |
 | `LLM_RETRY_BACKOFF_MS` | 否 | 首次重试退避（毫秒，指数递增） | `3000`                 |
+| `LLM_NO_THINK`     | 否   | Qwen3 等混合推理模型关闭思考链（system prompt 追加 `/no_think`） | `false` |
 | `PO_ZIP_PATH`      | 是   | 游戏本地化 ZIP 文件路径        | -                        |
 | `PO_ZIP_PO_FILES`  | 是   | ZIP 中 PO 文件路径（逗号分隔） | -                        |
 

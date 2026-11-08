@@ -86,6 +86,15 @@ pub fn load_config() -> Result<AppConfig, AppError> {
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(3000);
 
+    let llm_no_think = std::env::var("LLM_NO_THINK")
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false);
+
     let po_zip_path = std::env::var("PO_ZIP_PATH")
         .map_err(|_| AppError::Config("PO_ZIP_PATH is required".to_string()))?;
 
@@ -118,6 +127,7 @@ pub fn load_config() -> Result<AppConfig, AppError> {
         llm_request_timeout_secs,
         llm_max_retries,
         llm_retry_backoff_ms,
+        llm_no_think,
         po_zip_path,
         po_zip_po_files,
     })

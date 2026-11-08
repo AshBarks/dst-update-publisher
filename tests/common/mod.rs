@@ -25,6 +25,7 @@ pub fn make_config(mock_rss_url: &str, mock_page_url: &str) -> AppConfig {
         llm_request_timeout_secs: 180,
         llm_max_retries: 1,
         llm_retry_backoff_ms: 3000,
+        llm_no_think: false,
         po_zip_path: String::new(),
         po_zip_po_files: vec![],
     }
@@ -53,6 +54,7 @@ pub fn make_config_with_redis(
         llm_request_timeout_secs: 180,
         llm_max_retries: 1,
         llm_retry_backoff_ms: 3000,
+        llm_no_think: false,
         po_zip_path: String::new(),
         po_zip_po_files: vec![],
     }

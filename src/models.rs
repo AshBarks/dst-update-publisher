@@ -235,6 +235,9 @@ pub struct AppConfig {
     pub llm_request_timeout_secs: u64,
     pub llm_max_retries: u32,
     pub llm_retry_backoff_ms: u64,
+    /// Qwen3 等混合推理模型：true 时在 system prompt 末尾追加 `/no_think` 软开关，
+    /// 关闭思考链，避免长公告翻译被推理 token 拖慢并触发供应商 TPM 限流。
+    pub llm_no_think: bool,
     pub po_zip_path: String,
     pub po_zip_po_files: Vec<String>,
 }

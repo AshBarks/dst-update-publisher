@@ -214,9 +214,17 @@ pub async fn full_translate(
         "extracted glossary terms from source"
     );
 
+    // Qwen3 混合推理模型支持 `/no_think` 软开关：追加在 system prompt 末尾即可关闭
+    // 思考链。默认关闭，只有显式配置 LLM_NO_THINK=true 的部署才启用。
+    let system_prompt = if config.llm_no_think {
+        format!("{}\n/no_think", SYSTEM_PROMPT)
+    } else {
+        SYSTEM_PROMPT.to_string()
+    };
+
     let mut messages: Vec<ChatCompletionRequestMessage> = vec![
         ChatCompletionRequestSystemMessageArgs::default()
-            .content(SYSTEM_PROMPT)
+            .content(system_prompt)
             .build()
             .map_err(|e| AppError::LlmApi(format!("failed to build system message: {}", e)))?
             .into(),
